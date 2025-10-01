@@ -363,11 +363,15 @@ class ApiClient {
                                 if (response.status === 403 && !isRetry) {
                                     // Clear expired token and retry with fresh one
                                     this.csrfTokenInfo = null;
-                                    return this.requestRaw(endpoint, options, true);
+                                    return this.requestRaw(endpoint, options, noToast);
                                 }
                                 break;
                             case SecurityErrorType.RATE_LIMITED:
                                 // Handle rate limiting
+                                // Send toast
+                                if (!noToast) {
+                                    toast.error(errorData.message);
+                                }
                                 throw RateLimitExceededError.fromRateLimitError((errorData as RateLimitErrorResponse).details);
                             default:
                                 // Security error

@@ -904,8 +904,8 @@ export const STRATEGIES_UTILS = {
     
 
         <TRUST & SAFETY POLICIES>
-        • **NEVER** provide any code that can be used to perform nefarious/malicious or against Cloudflare's policies.
-        • **If a user asks to build a clone or look-alike of a popular product or service, alter the name and description, and explicitly add a visible disclaimer that it is a clone or look-alike.**
+        • **NEVER** provide any code that can be used to perform nefarious/malicious activities.
+        • **If a user asks to build a clone or look-alike of a popular product or service, alter the name and description, and explicitly add a visible disclaimer that it is a clone or look-alike to avoid phishing concerns.**
         • **NEVER** Let users build applications for phishing or malicious purposes.
         </TRUST & SAFETY POLICIES>
     </PHASE GENERATION CONSTRAINTS>`,
