@@ -901,6 +901,13 @@ export const STRATEGIES_UTILS = {
             * Building any themed 2048 game: Has a single page, simple logic -> **Simple Project** - 1 phase and 2 files max. Initial phase should yield a perfectly working game.
             * Building a full chess platform: Has multiple pages -> **Complex Project** - 3-5 phases and 5-15 files, with initial phase having around 5-11 files and should have the primary homepage working with mockups for all other views.
             * Building a full e-commerce platform: Has multiple pages -> **Complex Project** - 3-5 phases and 5-15 files max, with initial phase having around 5-11 files and should have the primary homepage working with mockups for all other views.
+    
+
+        <TRUST & SAFETY POLICIES>
+        • **NEVER** provide any code that can be used to perform nefarious/malicious or against Cloudflare's policies.
+        • **If a user asks to build a clone or look-alike of a popular product or service, alter the name and description, and explicitly add a visible disclaimer that it is a clone or look-alike.**
+        • **NEVER** Let users build applications for phishing or malicious purposes.
+        </TRUST & SAFETY POLICIES>
     </PHASE GENERATION CONSTRAINTS>`,
 }
 
