@@ -1,13 +1,13 @@
 import { ConversationalResponseType } from "../schemas";
-import { createAssistantMessage, createUserMessage, createMultiModalUserMessage } from "../inferutils/common";
+import { createAssistantMessage, createUserMessage, createMultiModalUserMessage, MessageRole } from "../inferutils/common";
 import { executeInference } from "../inferutils/infer";
-import { getSystemPromptWithProjectContext } from "./common";
 import { WebSocketMessageResponses } from "../constants";
 import { WebSocketMessageData } from "../../api/websocketTypes";
-import { AgentOperation, OperationOptions } from "../operations/common";
+import { AgentOperation, OperationOptions, getSystemPromptWithProjectContext } from "../operations/common";
 import { ConversationMessage } from "../inferutils/common";
 import { StructuredLogger } from "../../logger";
-import { IdGenerator } from "../utils/idGenerator";
+import { IdGenerator } from '../utils/idGenerator';
+import { MAX_LLM_MESSAGES } from '../constants';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
 import type { ImageAttachment } from '../../types/image-attachment';
 import { toolWebSearchDefinition } from "../tools/toolkit/web-search";
@@ -175,11 +175,144 @@ export function buildEditAppTool(stateMutator: (modificationRequest: string) => 
         implementation: async (args: EditAppArgs) => {
             console.log("Queueing app edit request", args);
             stateMutator(args.modificationRequest);
-            return {content: "Modification request queued successfully, will be implemented in the next phase of development."};
+            return {content: "queued successfully"};
         }
     };
 }
+
 export class UserConversationProcessor extends AgentOperation<UserConversationInputs, UserConversationOutputs> {
+    /**
+     * Compactify conversation context when approaching message limit
+     * Strategy:
+     * - Triggers at 0.8 * MAX_LLM_MESSAGES threshold
+     * - Compactifies oldest 60% of messages into a single summary message
+     * - Preserves last 40% of messages in full detail
+     * - Truncates long messages (>400 chars) in compactified section
+     * - Handles multi-modal content gracefully
+     */
+    async compactifyContext(messages: ConversationMessage[]): Promise<ConversationMessage[]> {
+        try {
+            const COMPACTION_THRESHOLD = Math.floor(0.8 * MAX_LLM_MESSAGES);
+            const PRESERVE_RECENT_RATIO = 0.4; // Keep last 40% of messages uncompressed
+            const MAX_MESSAGE_LENGTH = 400;
+            
+            // No compaction needed if below threshold
+            if (messages.length < COMPACTION_THRESHOLD) {
+                return messages;
+            }
+        
+        // Calculate split point: compactify older messages, preserve recent ones
+        const numToPreserve = Math.ceil(messages.length * PRESERVE_RECENT_RATIO);
+        const numToCompactify = messages.length - numToPreserve;
+        
+        // Edge case: if nothing to compactify, just return recent messages
+        if (numToCompactify <= 0) {
+            return messages.slice(-numToPreserve);
+        }
+        
+        const oldMessages = messages.slice(0, numToCompactify);
+        const recentMessages = messages.slice(numToCompactify);
+        
+        // Build compactified conversation history
+        const compactifiedLines: string[] = [
+            '📋 <Compactified Conversation History>',
+            `[${numToCompactify} earlier messages condensed for context efficiency]`,
+            ''
+        ];
+        
+        for (const msg of oldMessages) {
+            try {
+                // Extract role label
+                const roleLabel = msg.role === 'assistant' ? 'assistant (you)' : msg.role === 'user' ? 'User' : msg.role;
+                
+                // Extract and process message content
+                let messageText = '';
+                
+                if (typeof msg.content === 'string') {
+                    messageText = msg.content;
+                } else if (Array.isArray(msg.content)) {
+                    // Handle multi-modal content
+                    const textParts = msg.content
+                        .filter(item => item.type === 'text')
+                        .map(item => item.text)
+                        .join(' ');
+                    
+                    const imageCount = msg.content.filter(item => item.type === 'image_url').length;
+                    
+                    messageText = textParts;
+                    if (imageCount > 0) {
+                        messageText += ` [${imageCount} image(s) attached]`;
+                    }
+                } else if (msg.content === null || msg.content === undefined) {
+                    // Handle tool calls or empty messages
+                    if (msg.tool_calls && msg.tool_calls.length > 0) {
+                        const toolNames = msg.tool_calls
+                            .map(tc => {
+                                // Safe accessor for different OpenAI SDK versions
+                                const func = (tc as any).function;
+                                return func?.name || 'unknown_tool';
+                            })
+                            .join(', ');
+                        messageText = `[Used tools: ${toolNames}]`;
+                    } else {
+                        messageText = '[Empty message]';
+                    }
+                }
+                
+                // Truncate if exceeds max length
+                if (messageText.length > MAX_MESSAGE_LENGTH) {
+                    messageText = messageText.substring(0, MAX_MESSAGE_LENGTH) + '...';
+                }
+                
+                // Clean up whitespace and newlines for compactness
+                messageText = messageText
+                    .replace(/\n+/g, ' ')  // Replace newlines with spaces
+                    .replace(/\s+/g, ' ')   // Collapse multiple spaces
+                    .trim();
+                
+                // Add to compactified history
+                if (messageText) {
+                    compactifiedLines.push(`${roleLabel}: ${messageText}`);
+                }
+            } catch (error) {
+                // Gracefully handle any malformed messages
+                console.warn('Failed to process message during compactification:', error);
+                compactifiedLines.push(`[Message processing error]`);
+            }
+        }
+        
+            compactifiedLines.push('');
+            compactifiedLines.push('---');
+            compactifiedLines.push('[Recent conversation continues below in full detail...]');
+            
+            // Create the compactified summary message
+            const compactifiedMessage: ConversationMessage = {
+                role: 'system' as MessageRole,
+                content: compactifiedLines.join('\n'),
+                conversationId: `compactified-${Date.now()}`
+            };
+            
+            // Return compactified message + recent full messages
+            return [compactifiedMessage, ...recentMessages];
+        } catch (error) {
+            // If compactification fails, fall back to returning original messages
+            // or a safe subset to prevent complete failure
+            console.error('Error during context compactification:', error);
+            
+            // Safe fallback: return recent messages only if above threshold
+            const COMPACTION_THRESHOLD = Math.floor(0.8 * MAX_LLM_MESSAGES);
+            if (messages.length >= COMPACTION_THRESHOLD) {
+                const safeSubset = Math.ceil(messages.length * 0.4);
+                console.warn(`Compactification failed, returning last ${safeSubset} messages as fallback`);
+                return messages.slice(-safeSubset);
+            }
+            
+            // Below threshold, return all messages
+            return messages;
+        }
+    }
+
+
     async execute(inputs: UserConversationInputs, options: OperationOptions): Promise<UserConversationOutputs> {
         const { env, logger, context } = options;
         const { userMessage, pastMessages, errors, images } = inputs;
@@ -207,7 +340,6 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                 ? createUserMessage(`${userMessage}\n\n[${images.length} image(s) attached]`)
                 : createUserMessage(userMessage);
             
-            // Use history version for persistence
             const messages = [...pastMessages, {...userMessageForHistory, conversationId: IdGenerator.generateConversationId()}];
 
             let extractedUserResponse = "";
@@ -242,9 +374,21 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                 }))
             ];
 
+            const compactifiedMessages = await this.compactifyContext(pastMessages);
+            if (compactifiedMessages.length !== pastMessages.length) {
+                const numCompactified = pastMessages.length - (compactifiedMessages.length - 1); // -1 for the compactified summary message
+                logger.warn("Compactified conversation history to stay within token limit", { 
+                    originalLength: pastMessages.length,
+                    compactifiedLength: compactifiedMessages.length,
+                    numOldMessagesCompacted: numCompactified,
+                    threshold: `${Math.floor(0.8 * MAX_LLM_MESSAGES)} messages`
+                });
+            }
+
             logger.info("Executing inference for user message", { 
                 messageLength: userMessage.length,
                 aiConversationId,
+                compactifiedMessages,
                 tools
             });
             
@@ -252,7 +396,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             // Use inference message (with images) for AI, but store text-only in history
             const result = await executeInference({
                 env: env,
-                messages: [...systemPromptMessages, ...pastMessages, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}],
+                messages: [...systemPromptMessages, ...compactifiedMessages, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}],
                 agentActionName: "conversationalResponse",
                 context: options.inferenceContext,
                 tools, // Enable tools for the conversational AI
@@ -278,9 +422,14 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             };
 
             // Save the assistant's response to conversation history
-            messages.push(
-                ...((result.newMessages?.filter((message) => !(message.role === 'assistant' && typeof(message.content) === 'string' && message.content.includes('Internal Memo')))) || [])
-                .map((message) => ({ ...message, conversationId: IdGenerator.generateConversationId() })));
+            // If tools were called, include the tool call messages from toolCallContext
+            if (result.toolCallContext?.messages && result.toolCallContext.messages.length > 0) {
+                messages.push(
+                    ...result.toolCallContext.messages
+                        .filter((message) => !(message.role === 'assistant' && typeof(message.content) === 'string' && message.content.includes('Internal Memo')))
+                        .map((message) => ({ ...message, conversationId: IdGenerator.generateConversationId() }))
+                );
+            }
             messages.push({...createAssistantMessage(result.string), conversationId: IdGenerator.generateConversationId()});
 
             logger.info("Current conversation history", { messages });

@@ -98,3 +98,5 @@ export const WebSocketMessageRequests = {
 
 export const PREVIEW_EXPIRED_ERROR = 'Preview expired, attempting redeploy. Please try again after a minute or refresh the page';
 export const MAX_DEPLOYMENT_RETRIES = 5;
+export const MAX_LLM_MESSAGES = 100;
+export const MAX_TOOL_CALLING_DEPTH = 7;
