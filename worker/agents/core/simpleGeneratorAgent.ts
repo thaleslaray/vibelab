@@ -562,22 +562,21 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             const currentIssues = await this.fetchAllIssues();
             
             // Generate next phase with user suggestions if available
-            const userSuggestions = this.state.pendingUserInputs.length > 0 ? this.state.pendingUserInputs : undefined;
             
             // Get stored images if user suggestions are present
-            const userContext = (userSuggestions && userSuggestions.length > 0 && this.pendingUserImages.length > 0) 
+            const userContext = (this.state.pendingUserInputs.length && this.state.pendingUserInputs.length > 0) 
                 ? {
-                    suggestions: userSuggestions,
+                    suggestions: this.state.pendingUserInputs,
                     images: this.pendingUserImages
                 } as UserContext
                 : undefined;
 
-            if (userSuggestions && userSuggestions.length > 0) {
+            if (userContext && userContext?.suggestions && userContext.suggestions.length > 0) {
                 // Only reset pending user inputs if user suggestions were read
                 this.logger().info("Resetting pending user inputs", { 
-                    userSuggestions,
-                    hasImages: !!userContext?.images,
-                    imageCount: userContext?.images?.length || 0
+                    userSuggestions: userContext.suggestions,
+                    hasImages: !!userContext.images,
+                    imageCount: userContext.images?.length || 0
                 });
                 this.setState({
                     ...this.state,
