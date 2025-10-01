@@ -215,8 +215,8 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
         
         // Build compactified conversation history
         const compactifiedLines: string[] = [
-            '📋 <Compactified Conversation History>',
-            `[${numToCompactify} earlier messages condensed for context efficiency]`,
+            '<Compactified Conversation History>',
+            `[${numToCompactify} older messages condensed for context efficiency]`,
             ''
         ];
         
@@ -287,7 +287,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             
             // Create the compactified summary message
             const compactifiedMessage: ConversationMessage = {
-                role: 'system' as MessageRole,
+                role: 'user' as MessageRole,
                 content: compactifiedLines.join('\n'),
                 conversationId: `compactified-${Date.now()}`
             };
