@@ -1,5 +1,5 @@
 import { ConversationalResponseType } from "../schemas";
-import { createAssistantMessage, createUserMessage } from "../inferutils/common";
+import { createAssistantMessage, createUserMessage, createMultiModalUserMessage } from "../inferutils/common";
 import { executeInference } from "../inferutils/infer";
 import { getSystemPromptWithProjectContext } from "./common";
 import { WebSocketMessageResponses } from "../constants";
@@ -9,6 +9,7 @@ import { ConversationMessage } from "../inferutils/common";
 import { StructuredLogger } from "../../logger";
 import { IdGenerator } from "../utils/idGenerator";
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
+import type { ImageAttachment } from '../../types/image-attachment';
 import { toolWebSearchDefinition } from "../tools/toolkit/web-search";
 import { toolWeatherDefinition } from "../tools/toolkit/weather";
 import { ToolDefinition } from "../tools/types";
@@ -29,6 +30,7 @@ export interface UserConversationInputs {
         tool?: { name: string; status: 'start' | 'success' | 'error'; args?: Record<string, unknown> }
     ) => void;
     errors: RuntimeError[];
+    images?: ImageAttachment[];
 }
 
 export interface UserConversationOutputs {
@@ -115,6 +117,9 @@ I hope this description of the system is enough for you to understand your own r
 - Always acknowledge that implementation will happen "in the next development phase" to set expectations
 - Don't mention 'deveopment team' or stuff like that. Say "I'll add that" or "I'll make that change".
 
+We have also recently added support for image inputs in beta. User can guide app generation or show bugs/UI issues using image inputs. You may inform the user about this feature.
+But it has limitations - Images are not stored in any form. Thus they would be lost after some time. They are just cached in the runtime temporarily. 
+
 ## IMPORTANT GUIDELINES:
 - DO NOT generate or discuss code-level implementation details
 - DO NOT provide specific technical instructions or code snippets
@@ -125,6 +130,7 @@ I hope this description of the system is enough for you to understand your own r
 - You would know if you have correctly queued the request via the \`queue_request\` tool if you get the response of kind \`Modification request queued successfully...\`. If you don't get this response, then you have not queued the request correctly.
 - Only declare "Modification request queued successfully..." **after** you receive a tool result message from \`queue_request\` (role=tool) in **this turn** of the conversation. **Do not** mistake previous tool results for the current turn.
 - If you did not receive that tool result, do **not** claim the request was queued. Instead say: "I'm preparing that now—one moment." and then call the tool.
+- Once you successfully make a tool call, it's response would be sent back to you. You can then acknowledge that the tool call was complete as mentioned above. Don't start repeating yourself or write similar response back to the user.
 - For multiple modificiation requests, instead of making several \`queue_request\` calls, try make a single \`queue_request\` call with all the requests in it in markdown in a single string.
 - Sometimes your request might be lost. If the user suggests so, Please try again, and specifiy in your request that you are trying again.
 - Always be concise, direct, to the point and brief to the user. You are a man of few words. Dont talk more than what's necessary to the user.
@@ -176,15 +182,33 @@ export function buildEditAppTool(stateMutator: (modificationRequest: string) => 
 export class UserConversationProcessor extends AgentOperation<UserConversationInputs, UserConversationOutputs> {
     async execute(inputs: UserConversationInputs, options: OperationOptions): Promise<UserConversationOutputs> {
         const { env, logger, context } = options;
-        const { userMessage, pastMessages, errors } = inputs;
+        const { userMessage, pastMessages, errors, images } = inputs;
         logger.info("Processing user message", { 
             messageLength: inputs.userMessage.length,
+            hasImages: !!images && images.length > 0,
+            imageCount: images?.length || 0
         });
 
         try {
             const systemPrompt = SYSTEM_PROMPT.replace("{{errors}}", PROMPT_UTILS.serializeErrors(errors));
             const systemPromptMessages = getSystemPromptWithProjectContext(systemPrompt, context, CodeSerializerType.SIMPLE);
-            const messages = [...pastMessages, {...createUserMessage(userMessage), conversationId: IdGenerator.generateConversationId()}];
+            
+            // Create user message with optional images for inference
+            const userMessageForInference = images && images.length > 0
+                ? createMultiModalUserMessage(
+                    userMessage,
+                    images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                    'high'
+                )
+                : createUserMessage(userMessage);
+            
+            // For conversation history, store only text (images are ephemeral and not persisted)
+            const userMessageForHistory = images && images.length > 0
+                ? createUserMessage(`${userMessage}\n\n[${images.length} image(s) attached]`)
+                : createUserMessage(userMessage);
+            
+            // Use history version for persistence
+            const messages = [...pastMessages, {...userMessageForHistory, conversationId: IdGenerator.generateConversationId()}];
 
             let extractedUserResponse = "";
             let extractedEnhancedRequest = "";
@@ -225,9 +249,10 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             });
             
             // Don't save the system prompts so that every time new initial prompts can be generated with latest project context
+            // Use inference message (with images) for AI, but store text-only in history
             const result = await executeInference({
                 env: env,
-                messages: [...systemPromptMessages, ...messages],
+                messages: [...systemPromptMessages, ...pastMessages, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}],
                 agentActionName: "conversationalResponse",
                 context: options.inferenceContext,
                 tools, // Enable tools for the conversational AI

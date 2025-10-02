@@ -1,15 +1,16 @@
 import { PhaseConceptGenerationSchema, PhaseConceptGenerationSchemaType } from '../schemas';
 import { IssueReport } from '../domain/values/IssueReport';
-import { createUserMessage } from '../inferutils/common';
+import { createUserMessage, createMultiModalUserMessage } from '../inferutils/common';
 import { executeInference } from '../inferutils/infer';
 import { issuesPromptFormatter, PROMPT_UTILS, STRATEGIES } from '../prompts';
 import { Message } from '../inferutils/common';
 import { AgentOperation, getSystemPromptWithProjectContext, OperationOptions } from '../operations/common';
 import { AGENT_CONFIG } from '../inferutils/config';
+import type { UserContext } from '../core/types';
 
 export interface PhaseGenerationInputs {
     issues: IssueReport;
-    userSuggestions?: string[];
+    userContext?: UserContext;
     isUserSuggestedPhase?: boolean;
 }
 
@@ -137,14 +138,16 @@ const formatUserSuggestions = (suggestions?: string[] | null): string => {
     return `
 <USER SUGGESTIONS>
 The following client suggestions and feedback have been provided, relayed by our client conversation agent.
+Explicitly state user's needs and suggestions in relevant files and components. For example, if user provides an image url, explicitly state it as-in in changes required for that file.
 Please incorporate these suggestions **on priority** into your phase planning:
 
 **Client Feedback & Suggestions**:
+\`\`\`
 ${suggestions.map((suggestion, index) => `${index + 1}. ${suggestion}`).join('\n')}
+\`\`\`
 
 **IMPORTANT**: Give the above suggestions highest precedence and make sure they are accounted for properly, elegantly and in a non-hackish way. 
-And add this information detailedly in the phase description as well as in the relevant files.
-Explicitly state user's needs and suggestions in relevant files and components. For example, if user provides an image url, explicitly state it as-in in changes required for that file.
+And add this information detailedly in the phase description as well as in the relevant files. You may implement these suggestions across multiple phases as needed.
 </USER SUGGESTIONS>`;
 };
 
@@ -161,24 +164,36 @@ const userPromptFormatter = (issues: IssueReport, userSuggestions?: string[], is
     
     return PROMPT_UTILS.verifyPrompt(prompt);
 }
-
 export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInputs, PhaseConceptGenerationSchemaType> {
     async execute(
         inputs: PhaseGenerationInputs,
         options: OperationOptions
     ): Promise<PhaseConceptGenerationSchemaType> {
-        const { issues, userSuggestions, isUserSuggestedPhase } = inputs;
+        const { issues, userContext, isUserSuggestedPhase } = inputs;
         const { env, logger, context } = options;
         try {
-            const suggestionsInfo = userSuggestions && userSuggestions.length > 0
-                ? `with ${userSuggestions.length} user suggestions`
+            const suggestionsInfo = userContext?.suggestions && userContext.suggestions.length > 0
+                ? `with ${userContext.suggestions.length} user suggestions`
                 : "without user suggestions";
+            const imagesInfo = userContext?.images && userContext.images.length > 0
+                ? ` and ${userContext.images.length} image(s)`
+                : "";
             
-            logger.info(`Generating next phase ${suggestionsInfo}`);
+            logger.info(`Generating next phase ${suggestionsInfo}${imagesInfo}`);
     
+            // Create user message with optional images
+            const userPrompt = userPromptFormatter(issues, userContext?.suggestions, isUserSuggestedPhase);
+            const userMessage = userContext?.images && userContext.images.length > 0
+                ? createMultiModalUserMessage(
+                    userPrompt,
+                    userContext.images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                    'high'
+                )
+                : createUserMessage(userPrompt);
+            
             const messages: Message[] = [
                 ...getSystemPromptWithProjectContext(SYSTEM_PROMPT, context),
-                createUserMessage(userPromptFormatter(issues, userSuggestions, isUserSuggestedPhase))
+                userMessage
             ];
     
             const { object: results } = await executeInference({
@@ -187,7 +202,7 @@ export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInpu
                 agentActionName: "phaseGeneration",
                 schema: PhaseConceptGenerationSchema,
                 context: options.inferenceContext,
-                reasoning_effort: (userSuggestions || issues.runtimeErrors.length > 0) ? AGENT_CONFIG.phaseGeneration.reasoning_effort == 'low' ? 'medium' : 'high' : undefined,
+                reasoning_effort: (userContext?.suggestions || issues.runtimeErrors.length > 0) ? AGENT_CONFIG.phaseGeneration.reasoning_effort == 'low' ? 'medium' : 'high' : undefined,
                 format: 'markdown',
             });
     
