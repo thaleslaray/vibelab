@@ -245,6 +245,30 @@ Visit your app at `http://localhost:5173`
 - **"Deploy fails with authentication error"**: Ensure your custom domain is properly configured and deployed
 - **Note**: This refers to deploying generated apps from the chat interface, not GitHub repository deployments
 
+**Corporate Network Issues**:
+- **SSL/TLS certificate errors in Docker containers**: Corporate networks often use custom root CA certificates
+- **Cloudflared tunnel failures**: May be blocked by corporate proxies or require certificate trust
+- **Package installation failures**: npm/bun installs may fail due to certificate validation
+
+**Corporate Network Solutions**:
+If you're on a corporate network with custom SSL certificates, you'll need to modify the `SandboxDockerfile`:
+
+1. **Copy your corporate root CA certificate** to the project root (don't commit to git!)
+2. **Edit SandboxDockerfile** to include your certificate:
+
+```dockerfile
+# Add your company's Root CA certificate for corporate network access
+COPY your-root-ca.pem /usr/local/share/ca-certificates/your-root-ca.crt
+RUN update-ca-certificates
+
+# Set SSL environment variables for cloudflared and other tools
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/your-root-ca.crt
+ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+```
+
+**⚠️ Security Warning**: Never commit corporate CA certificates to public repositories. Use `.gitignore` to exclude certificate files and only use this for local development.
+
 ### Getting Help
 
 1. Check the setup report for specific issues and suggestions
