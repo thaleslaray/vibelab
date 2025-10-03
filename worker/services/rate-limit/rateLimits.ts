@@ -78,6 +78,10 @@ export class RateLimitService {
         config: RateLimitSettings,
         limitType: RateLimitType
     ) : Promise<boolean> {
+        // If dev, don't enforce
+        if (env.ENVIRONMENT === 'dev') {
+            return true;
+        }
         const rateLimitConfig = config[limitType];
         let success = false;
         
