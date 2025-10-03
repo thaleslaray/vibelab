@@ -24,6 +24,7 @@ interface SetupConfig {
 	setupRemote?: boolean;
 	prodDomain?: string;
 	prodVars?: Record<string, string>;
+	customProviderKeys?: Array<{key: string, provider: string}>;
 }
 
 interface ResourceInfo {
@@ -84,6 +85,11 @@ class SetupManager {
 			// Setup AI Gateway if configured
 			if (this.config.useAIGateway) {
 				await this.safeExecute('setup AI Gateway', () => this.ensureAIGateway(resources));
+			}
+			
+			// Update worker configuration for custom providers
+			if (this.config.customProviderKeys && this.config.customProviderKeys.length > 0) {
+				await this.safeExecute('update worker configuration', () => this.updateWorkerConfiguration());
 			}
 			
 			await this.patchDockerfileForARM64();
@@ -158,16 +164,35 @@ class SetupManager {
 
 	private loadExistingConfig(): void {
 		const devVarsPath = join(PROJECT_ROOT, '.dev.vars');
+		const prodVarsPath = join(PROJECT_ROOT, '.prod.vars');
 		
-		if (!existsSync(devVarsPath)) {
-			console.log('📄 No existing .dev.vars file found - starting fresh setup');
+		// Load .dev.vars
+		if (existsSync(devVarsPath)) {
+			console.log('📄 Found existing .dev.vars file - reading current configuration...');
+			this.parseConfigFile(devVarsPath);
+		}
+		
+		// Load .prod.vars for production config
+		if (existsSync(prodVarsPath)) {
+			console.log('📄 Found existing .prod.vars file - reading production configuration...');
+			this.parseConfigFile(prodVarsPath);
+		}
+		
+		if (!existsSync(devVarsPath) && !existsSync(prodVarsPath)) {
+			console.log('📄 No existing configuration files found - starting fresh setup');
 			return;
 		}
 
-		console.log('📄 Found existing .dev.vars file - reading current configuration...');
-		
+		const configuredKeys = Object.keys(this.existingConfig);
+		if (configuredKeys.length > 0) {
+			console.log(`✅ Found ${configuredKeys.length} existing configuration values`);
+			console.log('   Will only prompt for missing or updated values\n');
+		}
+	}
+	
+	private parseConfigFile(filePath: string): void {
 		try {
-			const content = readFileSync(devVarsPath, 'utf-8');
+			const content = readFileSync(filePath, 'utf-8');
 			const lines = content.split('\n');
 			
 			for (const line of lines) {
@@ -180,14 +205,8 @@ class SetupManager {
 					}
 				}
 			}
-
-			const configuredKeys = Object.keys(this.existingConfig);
-			if (configuredKeys.length > 0) {
-				console.log(`✅ Found ${configuredKeys.length} existing configuration values`);
-				console.log('   Will only prompt for missing or updated values\n');
-			}
 		} catch (error) {
-			console.warn(`⚠️  Could not read .dev.vars: ${error instanceof Error ? error.message : String(error)}`);
+			console.warn(`⚠️  Could not read config file: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 
@@ -224,19 +243,6 @@ class SetupManager {
 		console.log('📋 Configuration Review & Setup');
 		console.log('--------------------------------\n');
 
-		// Ask about remote bindings preference first
-		console.log('🌍 Remote Bindings Configuration');
-		console.log('Would you like to use remote Cloudflare resources (KV, D1, R2, etc.)?');
-		console.log('   • Yes: Use remote Cloudflare resources (requires paid plan for some features)');
-		console.log('   • No: Use local-only development (works on free tier)\n');
-		
-		const useRemoteChoice = await this.prompt('Use remote Cloudflare bindings? (y/n): ');
-		const useRemoteBindings = useRemoteChoice.toLowerCase() === 'y';
-		
-		if (!useRemoteBindings) {
-			console.log('✅ Local-only mode selected - all resources will use local bindings');
-		}
-
 		// Get Cloudflare account ID
 		const accountId = await this.promptWithDefault(
 			'Enter your Cloudflare Account ID: ',
@@ -255,70 +261,149 @@ class SetupManager {
 			throw new Error('API Token is required');
 		}
 
-		// Get custom domain
-		console.log('\n🌐 Local Development Domain');
-		const customDomain = await this.promptWithDefault(
-			'Enter your local development domain (or press Enter for localhost:5173): ',
-			this.existingConfig.CUSTOM_DOMAIN || 'localhost:5173'
-		);
-		const finalDomain = customDomain || 'localhost:5173';
-
-		// Ask about remote/production setup
-		console.log('\n🌍 Remote/Production Setup');
-		console.log('Would you like to configure for remote deployment as well?');
-		console.log('   • Yes: Creates .prod.vars for production deployment');
-		console.log('   • No: Only local development setup\n');
+		// Domain Configuration - Ask once upfront with existing domain detection
+		console.log('\n🌐 Domain Configuration');
+		console.log('A custom domain is required for production deployment and remote resource access.');
+		console.log('Without a custom domain, only local development will be available.\n');
 		
-		const setupRemoteChoice = await this.prompt('Configure for remote deployment? (y/n): ');
-		let setupRemote = setupRemoteChoice.toLowerCase() === 'y';
-		
+		let customDomain: string | undefined;
+		let useRemoteBindings = false;
+		let setupRemote = false;
 		let prodDomain: string | undefined;
 		
-		if (setupRemote) {
-			console.log('\n🏭 Production Configuration');
-			prodDomain = await this.prompt('Enter your production domain (required for remote deployment): ');
+		// Check if we already have a production domain configured
+		const existingProdDomain = this.existingConfig.CUSTOM_DOMAIN && 
+			this.existingConfig.CUSTOM_DOMAIN !== 'localhost:5173' ? 
+			this.existingConfig.CUSTOM_DOMAIN : undefined;
+		
+		while (true) {
+			customDomain = await this.promptWithDefault(
+				'Enter your custom domain (or press Enter to skip): ',
+				existingProdDomain || this.existingConfig.CUSTOM_DOMAIN
+			);
 			
-			if (!prodDomain || prodDomain.trim() === '' || prodDomain === 'localhost:5173') {
-				console.error('\n❌ Production domain is required for remote deployment.');
-				console.error('   Remote setup cancelled - continuing with local-only setup.\n');
+			if (!customDomain || customDomain.trim() === '' || customDomain === 'localhost:5173') {
+				console.log('\n⚠️  No custom domain provided.');
+				console.log('   • Remote Cloudflare resources: Not available');
+				console.log('   • Production deployment: Not available');
+				console.log('   • Only local development will be configured\n');
+				
+				const continueChoice = await this.prompt('Continue with local-only setup? (Y/n): ');
+				if (continueChoice.toLowerCase() === 'n') {
+					console.log('Please provide a custom domain:\n');
+					continue;
+				}
+				
+				customDomain = 'localhost:5173';
+				useRemoteBindings = false;
 				setupRemote = false;
+				break;
 			} else {
-				console.log(`✅ Production domain set: ${prodDomain}`);
+				console.log(`✅ Custom domain set: ${customDomain}`);
+				prodDomain = customDomain; // Use same domain for production
+				
+				// Ask about remote resources
+				const remoteChoice = await this.prompt('Use remote Cloudflare resources (KV, D1, R2, etc.)? (Y/n): ');
+				useRemoteBindings = remoteChoice.toLowerCase() !== 'n';
+				
+				// Ask about production setup
+				const prodChoice = await this.prompt('Configure for production deployment? (Y/n): ');
+				setupRemote = prodChoice.toLowerCase() !== 'n';
+				
+				if (useRemoteBindings) {
+					console.log('✅ Remote Cloudflare resources will be used');
+				} else {
+					console.log('✅ Local-only bindings selected');
+				}
+				
+				break;
 			}
 		}
+		
+		const finalDomain = customDomain || 'localhost:5173';
 
 		// AI Gateway configuration
 		console.log('\n🤖 AI Gateway Configuration');
-		const useAIGatewayChoice = await this.prompt('Use Cloudflare AI Gateway? [STRONGLY RECOMMENDED for developer experience] (y/n): ');
-		const useAIGateway = useAIGatewayChoice.toLowerCase() === 'y';
+		const useAIGatewayChoice = await this.prompt('Use Cloudflare AI Gateway? [STRONGLY RECOMMENDED for developer experience] (Y/n): ');
+		const useAIGateway = useAIGatewayChoice.toLowerCase() !== 'n';
 
 		let aiGatewayUrl: string | undefined;
-		if (!useAIGateway) {
+		const devVars: Record<string, string> = {};
+		const providedProviders: string[] = [];
+		let customProviderKeys: Array<{key: string, provider: string}> = [];
+
+		if (useAIGateway) {
+			// Auto-set AI Gateway token to API token
+			console.log('✅ AI Gateway enabled - will auto-configure CLOUDFLARE_AI_GATEWAY_TOKEN');
+		} else {
+			console.log('\n⚠️  WARNING: Without AI Gateway, you MUST manually edit worker/agents/inferutils/config.ts');
+			console.log('   to configure your models. Model names should be in format: "<provider-name>/<model-name>"');
+			console.log('   Example: "openai/gpt-4" or "anthropic/claude-3-5-sonnet"\n');
+			
 			aiGatewayUrl = await this.prompt('Enter custom OpenAI-compatible URL (optional): ');
 		}
 
-		// AI Provider configuration with smart prompts
+		// AI Provider configuration
 		console.log('\n🔧 AI Provider Configuration');
-		console.log('ℹ️  Note: Default model configurations are in worker/agents/inferutils/config.ts');
-		console.log('   You may need to edit those configs based on which API keys you provide below.\n');
-		
-		const devVars: Record<string, string> = {};
+		console.log('Available providers:');
+		console.log('   1. OpenAI (for GPT models)');
+		console.log('   2. Anthropic (for Claude models)');
+		console.log('   3. Google AI Studio (for Gemini models) [DEFAULT]');
+		console.log('   4. Cerebras (for open source models)');
+		console.log('   5. OpenRouter (for various models)');
+		console.log('   6. Custom provider\n');
 
-		const aiProviderVars = [
-			'ANTHROPIC_API_KEY',
-			'OPENAI_API_KEY',
-			'GOOGLE_AI_STUDIO_API_KEY'
-		];
-
-		const providedProviders: string[] = [];
+		const providerChoice = await this.prompt('Select providers (comma-separated numbers, e.g., 1,2,3): ');
+		const selectedProviders = providerChoice.split(',').map(n => parseInt(n.trim())).filter(n => n >= 1 && n <= 6);
 		
-		for (const varName of aiProviderVars) {
-			const existing = this.existingConfig[varName];
-			const value = await this.promptWithDefault(`${varName}: `, existing);
-			if (value) {
-				devVars[varName] = value;
-				providedProviders.push(varName.replace('_API_KEY', '').toLowerCase());
+		if (selectedProviders.length === 0) {
+			console.log('⚠️  No providers selected - you MUST configure at least one provider!');
+			console.log('   Adding Google AI Studio as default...');
+			selectedProviders.push(3);
+		}
+
+		// Process selected providers
+		const providerMap = {
+			1: { name: 'OpenAI', key: 'OPENAI_API_KEY', provider: 'openai' },
+			2: { name: 'Anthropic', key: 'ANTHROPIC_API_KEY', provider: 'anthropic' },
+			3: { name: 'Google AI Studio', key: 'GOOGLE_AI_STUDIO_API_KEY', provider: 'google-ai-studio' },
+			4: { name: 'Cerebras', key: 'CEREBRAS_API_KEY', provider: 'cerebras' },
+			5: { name: 'OpenRouter', key: 'OPENROUTER_API_KEY', provider: 'openrouter' }
+		};
+
+		console.log('\n🔑 API Key Configuration');
+		for (const choice of selectedProviders) {
+			if (choice === 6) {
+				// Custom provider
+				const customProviderName = await this.prompt('Enter custom provider name: ');
+				if (customProviderName) {
+					const customKey = `${customProviderName.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`;
+					const apiKey = await this.prompt(`${customKey}: `);
+					if (apiKey) {
+						devVars[customKey] = apiKey;
+						customProviderKeys.push({ key: customKey, provider: customProviderName });
+						providedProviders.push(customProviderName);
+					}
+				}
+			} else {
+				const provider = providerMap[choice as keyof typeof providerMap];
+				if (provider) {
+					const existing = this.existingConfig[provider.key];
+					const value = await this.promptWithDefault(`${provider.name} API Key (${provider.key}): `, existing);
+					if (value) {
+						devVars[provider.key] = value;
+						providedProviders.push(provider.provider);
+					}
+				}
 			}
+		}
+
+		// Warning about config.ts if not using Gemini as default
+		const hasGemini = selectedProviders.includes(3);
+		if (!hasGemini) {
+			console.log('\n⚠️  IMPORTANT: You selected providers other than Google AI Studio (Gemini).');
+			console.log('   You MUST edit worker/agents/inferutils/config.ts to change the default model configurations');
+			console.log('   from Gemini models to your selected providers!\n');
 		}
 
 		// OAuth and other configuration with smart prompts
@@ -359,6 +444,12 @@ class SetupManager {
 		// Generate or preserve required secrets
 		devVars.JWT_SECRET = this.existingConfig.JWT_SECRET || this.generateRandomSecret(64);
 		devVars.WEBHOOK_SECRET = this.existingConfig.WEBHOOK_SECRET || this.generateRandomSecret(32);
+		devVars.USE_TUNNEL_FOR_PREVIEW = 'true';
+
+		// Auto-set AI Gateway token if using AI Gateway
+		if (useAIGateway) {
+			devVars.CLOUDFLARE_AI_GATEWAY_TOKEN = apiToken;
+		}
 
 		// Prepare production vars (copy dev vars as defaults)
 		const prodVars = setupRemote && prodDomain ? { ...devVars, CUSTOM_DOMAIN: prodDomain } : undefined;
@@ -373,7 +464,8 @@ class SetupManager {
 			devVars,
 			setupRemote,
 			prodDomain,
-			prodVars
+			prodVars,
+			customProviderKeys
 		};
 
 		console.log('\n✅ Configuration collected successfully\n');
@@ -1031,9 +1123,8 @@ class SetupManager {
 
 		// AI Gateway Configuration
 		content += '# AI Gateway Configuration\n';
-		if (this.config.useAIGateway) {
-			content += '#CLOUDFLARE_AI_GATEWAY_TOKEN=""\n';
-		} else if (this.config.aiGatewayUrl) {
+        content += `CLOUDFLARE_AI_GATEWAY_TOKEN="${this.config.devVars?.CLOUDFLARE_AI_GATEWAY_TOKEN}"\n`;
+		if (this.config.aiGatewayUrl) {
 			content += `CLOUDFLARE_AI_GATEWAY_URL="${this.config.aiGatewayUrl}"\n`;
 		}
 		content += '\n';
@@ -1143,7 +1234,7 @@ class SetupManager {
 		// Production Configuration
 		content += '# Production Configuration\n';
 		content += `CUSTOM_DOMAIN="${this.config.prodDomain}"\n`;
-		content += 'ENVIRONMENT="production"\n\n';
+		content += 'ENVIRONMENT="prod"\n\n';
 
 		// Essential Secrets
 		content += '# Essential Secrets\n';
@@ -1152,9 +1243,8 @@ class SetupManager {
 
 		// AI Gateway Configuration
 		content += '# AI Gateway Configuration\n';
-		if (this.config.useAIGateway) {
-			content += '#CLOUDFLARE_AI_GATEWAY_TOKEN=""\n';
-		} else if (this.config.aiGatewayUrl) {
+        content += `CLOUDFLARE_AI_GATEWAY_TOKEN="${this.config.prodVars?.CLOUDFLARE_AI_GATEWAY_TOKEN}"\n`;
+		if (this.config.aiGatewayUrl) {
 			content += `CLOUDFLARE_AI_GATEWAY_URL="${this.config.aiGatewayUrl}"\n`;
 		}
 		content += '\n';
@@ -1579,6 +1669,70 @@ class SetupManager {
 		}
 		
 		console.log('\n✨ Happy coding with VibSDK! ✨');
+	}
+
+	private async updateWorkerConfiguration(): Promise<void> {
+		const workerConfigPath = join(PROJECT_ROOT, 'worker-configuration.d.ts');
+		
+		if (!existsSync(workerConfigPath) || !this.config.customProviderKeys?.length) {
+			return;
+		}
+
+		console.log('📝 Updating worker configuration for custom providers...');
+
+		try {
+			let content = readFileSync(workerConfigPath, 'utf-8');
+			
+			// Find the Env interface
+			const envInterfaceMatch = content.match(/interface Env \{([\s\S]*?)\}/);
+			if (!envInterfaceMatch) {
+				console.warn('⚠️  Could not find Env interface in worker-configuration.d.ts');
+				return;
+			}
+
+			// Check which custom keys need to be added
+			const keysToAdd: string[] = [];
+			for (const customProvider of this.config.customProviderKeys) {
+				if (!content.includes(`${customProvider.key}: string;`)) {
+					keysToAdd.push(customProvider.key);
+				}
+			}
+
+			if (keysToAdd.length === 0) {
+				console.log('✅ Worker configuration already up to date');
+				return;
+			}
+
+			// Add missing keys to the Env interface
+			const envContent = envInterfaceMatch[1];
+			const lastApiKeyMatch = envContent.match(/.*_API_KEY: string;/g);
+			
+			if (lastApiKeyMatch) {
+				const lastApiKeyLine = lastApiKeyMatch[lastApiKeyMatch.length - 1];
+				const insertPoint = content.indexOf(lastApiKeyLine) + lastApiKeyLine.length;
+				
+				const newKeys = keysToAdd.map(key => `\n\t\t${key}: string;`).join('');
+				content = content.slice(0, insertPoint) + newKeys + content.slice(insertPoint);
+			}
+
+			// Also update the NodeJS.ProcessEnv extends part
+			const processEnvMatch = content.match(/interface ProcessEnv extends StringifyValues<Pick<Cloudflare\.Env, "(.*?)">>/);
+			if (processEnvMatch) {
+				const existingKeys = processEnvMatch[1];
+				const missingKeys = keysToAdd.filter(key => !existingKeys.includes(key));
+				
+				if (missingKeys.length > 0) {
+					const updatedKeys = existingKeys + ' | "' + missingKeys.join('" | "') + '"';
+					content = content.replace(processEnvMatch[0], processEnvMatch[0].replace(existingKeys, updatedKeys));
+				}
+			}
+
+			writeFileSync(workerConfigPath, content, 'utf-8');
+			console.log(`✅ Added ${keysToAdd.length} custom provider key(s) to worker configuration`);
+
+		} catch (error) {
+			console.warn(`⚠️  Could not update worker configuration: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	private async patchDockerfileForARM64(): Promise<void> {

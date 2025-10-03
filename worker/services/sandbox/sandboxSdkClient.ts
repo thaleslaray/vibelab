@@ -1,4 +1,4 @@
-import { getSandbox, Sandbox, ExecuteResponse } from '@cloudflare/sandbox';
+import { getSandbox, Sandbox, ExecuteResponse, parseSSEStream, LogEvent } from '@cloudflare/sandbox';
 
 import {
     TemplateDetailsResponse,
@@ -48,6 +48,7 @@ import { TemplateParser } from './templateParser';
 import { ResourceProvisioningResult } from './types';
 import { GitHubService } from '../github/GitHubService';
 import { getPreviewDomain } from '../../utils/urls';
+import { isDev } from 'worker/utils/envs';
 // Export the Sandbox class in your Worker
 export { Sandbox as UserAppSandboxService, Sandbox as DeployerService} from "@cloudflare/sandbox";
 
@@ -747,6 +748,62 @@ export class SandboxSdkClient extends BaseSandboxService {
         }
     }
 
+    /*
+    * Starts a cloudflared tunnel for the specified instance
+    * Super usefulfor local development
+    */
+    private async startCloudflaredTunnel(instanceId: string, port: number): Promise<string> {
+        try {
+            const process = await this.getSandbox().startProcess(
+                `cloudflared tunnel --url http://localhost:${port}`, 
+                { cwd: instanceId }
+            );
+            this.logger.info(`Started cloudflared tunnel for ${instanceId}`);
+
+            // Stream process logs to extract the preview URL
+            const logStream = await this.getSandbox().streamProcessLogs(process.id);
+            
+            return new Promise<string>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    // reject(new Error('Timeout waiting for cloudflared tunnel URL'));
+                    this.logger.warn('Timeout waiting for cloudflared tunnel URL');
+                    resolve('');
+                }, 20000); // 20 second timeout
+
+                const processLogs = async () => {
+                    try {
+                        for await (const event of parseSSEStream<LogEvent>(logStream)) {
+                            if (event.data) {
+                                const logLine = event.data;
+                                this.logger.info(`Cloudflared log ===> ${logLine}`);
+                                
+                                // Look for the preview URL in the logs
+                                // Format: https://subdomain.trycloudflare.com
+                                const urlMatch = logLine.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+                                if (urlMatch) {
+                                    clearTimeout(timeout);
+                                    const previewURL = urlMatch[0];
+                                    this.logger.info(`Found cloudflared tunnel URL: ${previewURL}`);
+                                    resolve(previewURL);
+                                    return;
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        this.logger.error('Cloudflare tunnel process failed', error);
+                        clearTimeout(timeout);
+                        reject(error);
+                    }
+                };
+
+                processLogs();
+            });
+        } catch (error) {
+            this.logger.warn('Failed to start cloudflared tunnel', error);
+            throw error;
+        }
+    }
+
     /**
      * Updates project configuration files with the specified project name
      */
@@ -807,9 +864,19 @@ export class SandboxSdkClient extends BaseSandboxService {
             // Allocate single port for both dev server and tunnel
             const allocatedPort = await this.allocateAvailablePort();
 
+            // If on local development, start cloudflared tunnel
+            let tunnelUrlPromise = Promise.resolve('');
+            if (isDev(env) || env.USE_TUNNEL_FOR_PREVIEW) {
+                this.logger.info('Starting cloudflared tunnel for local development', { instanceId });
+                tunnelUrlPromise = this.startCloudflaredTunnel(instanceId, allocatedPort);
+            }
+
             this.logger.info('Installing dependencies', { instanceId });
-            const installResult = await this.executeCommand(instanceId, `bun install`);
-            this.logger.info('Dependencies installed', { instanceId });
+            const [installResult, tunnelURL] = await Promise.all([
+                this.executeCommand(instanceId, `bun install`),
+                tunnelUrlPromise
+            ]);
+            this.logger.info('Dependencies installed', { instanceId, tunnelURL });
                 
             if (installResult.exitCode === 0) {
                 // Try to start development server in background
@@ -824,15 +891,22 @@ export class SandboxSdkClient extends BaseSandboxService {
                     // Expose the same port for preview URL
                     const previewResult = await sandbox.exposePort(allocatedPort, { hostname: getPreviewDomain(env) });
                     let previewURL = previewResult.url;
-                    const previewDomain = getPreviewDomain(env);
-                    if (previewDomain) {
-                        // Replace CUSTOM_DOMAIN with previewDomain in previewURL
-                        previewURL = previewURL.replace(env.CUSTOM_DOMAIN, previewDomain);
+                    if (!isDev(env)) {
+                        const previewDomain = getPreviewDomain(env);
+                        if (previewDomain) {
+                            // Replace CUSTOM_DOMAIN with previewDomain in previewURL
+                            previewURL = previewURL.replace(env.CUSTOM_DOMAIN, previewDomain);
+                        }
+                    }
+
+                    if(env.USE_TUNNEL_FOR_PREVIEW) {
+                        this.logger.info('Using tunnel url instead for preview as configured', { instanceId, tunnelURL });
+                        previewURL = tunnelURL;
                     }
                         
                     this.logger.info('Preview URL exposed', { instanceId, previewURL });
                         
-                    return { previewURL, tunnelURL: '', processId, allocatedPort };
+                    return { previewURL, tunnelURL, processId, allocatedPort };
                 } catch (error) {
                     this.logger.warn('Failed to start dev server', error);
                     return undefined;

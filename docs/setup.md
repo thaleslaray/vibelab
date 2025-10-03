@@ -62,26 +62,80 @@ The setup script will ask you for the following information:
 
    **Important**: Some features like D1 databases and R2 may require a paid Cloudflare plan.
 
-### Domain Configuration (Optional)
+### Domain Configuration
 
-- **Custom Domain**: Any domain you own that's managed by Cloudflare
-- **No Domain**: Script will default to `localhost:5173` for local development
+The script now uses a **simplified, upfront domain configuration**:
+
+**With Custom Domain:**
+```bash
+Enter your custom domain (or press Enter to skip): myapp.com
+✅ Custom domain set: myapp.com
+Use remote Cloudflare resources (KV, D1, R2, etc.)? (Y/n): 
+Configure for production deployment? (Y/n): 
+```
+
+**Without Custom Domain:**
+```bash
+Enter your custom domain (or press Enter to skip): [press Enter]
+⚠️  No custom domain provided.
+   • Remote Cloudflare resources: Not available
+   • Production deployment: Not available
+   • Only local development will be configured
+
+Continue with local-only setup? (Y/n): 
+```
+
+**Benefits:**
+- **One-time decision**: Domain asked once, used for both dev and production
+- **Clear consequences**: Script explains what features are unavailable without domain
+- **Retry option**: Can go back if you change your mind
+- **Y/n defaults**: Capital letter shows default choice (press Enter)
 
 ### AI Gateway Configuration
 
-Choose one:
-- **Cloudflare AI Gateway**: Automatic setup through Cloudflare
-- **Custom OpenAI URL**: Use your own OpenAI-compatible endpoint
+**Cloudflare AI Gateway (Recommended)**
+- **Automatic token setup**: When selected, `CLOUDFLARE_AI_GATEWAY_TOKEN` is automatically set to your API token
+- **No manual configuration**: The script handles all AI Gateway authentication
+- **Better performance**: Caching, rate limiting, and monitoring included
 
-### AI Model Configuration
+**Custom OpenAI URL (Alternative)**
+- For users with existing OpenAI-compatible endpoints
+- Requires manual model configuration in `config.ts`
 
-The setup script will ask for API keys from various providers (OpenAI, Anthropic, Google AI Studio). 
+### AI Provider Selection
 
-**Important**: Default model configurations are located in `worker/agents/inferutils/config.ts`. You may need to edit these configurations based on which API keys you provide:
+The setup script offers multiple AI providers with intelligent multi-selection:
 
-- If you **don't provide Google AI Studio keys**, update fallback models from Gemini to your available providers
-- Review the performance recommendations in the config file comments
-- Consider switching primary models based on your available providers and cost preferences
+**Available Providers:**
+1. **OpenAI** (for GPT models)
+2. **Anthropic** (for Claude models)  
+3. **Google AI Studio** (for Gemini models) - **Default & Recommended**
+4. **Cerebras** (for open source models)
+5. **OpenRouter** (for various models)
+6. **Custom provider** (for any other provider)
+
+**Provider Selection:**
+- Select multiple providers with comma-separated numbers (e.g., `1,2,3`)
+- Each selected provider will prompt for its API key
+- Custom providers automatically generate `PROVIDER_NAME_API_KEY` variables
+- Custom providers are automatically added to `worker-configuration.d.ts`
+
+### Important Model Configuration Notes
+
+**Google AI Studio (Recommended):**
+- Default model configurations use Gemini models
+- No additional config.ts editing required
+- Best performance and compatibility
+
+**Other Providers:**
+- **Strong warning**: You MUST edit `worker/agents/inferutils/config.ts` 
+- Change default model configurations from Gemini to your selected providers
+- Model format: `<provider-name>/<model-name>` (e.g., `openai/gpt-4`, `anthropic/claude-3.5-sonnet`)
+- Review fallback model configurations
+
+**Without AI Gateway:**
+- **Manual config.ts editing required** for all model configurations
+- Model names must follow `<provider-name>/<model-name>` format
 
 ### OAuth Configuration
 
@@ -172,6 +226,25 @@ Visit your app at `http://localhost:5173`
 - You've exceeded your R2 bucket quota
 - **Solution**: Update your API token permissions or upgrade your Cloudflare plan
 
+**AI Configuration Issues**:
+- **"AI Gateway token already configured" but token not in .dev.vars**: Re-run setup, this was a bug that's now fixed
+- **Models not working with custom providers**: Edit `worker/agents/inferutils/config.ts` to change default model configurations
+- **Custom provider not recognized**: Check that the provider was added to `worker-configuration.d.ts`
+- **AI Gateway creation failed**: Ensure your API token has AI Gateway permissions
+
+**Local Development & Tunnel Issues**:
+- **Cloudflared tunnel timeout**: Wait 20-30 seconds, then refresh. Tunnel creation can be slow
+- **"Tunnel creation failed"**: This is normal occasionally. The app will still work with regular preview URLs
+- **Sandbox instances dying**: Normal behavior if they restart successfully. Only worry if persistent
+- **Preview URL not accessible**: Check if tunnel is still creating, or try refreshing the instance
+- **Multiple port exposure issues on macOS**: Use tunnels (`USE_TUNNEL_FOR_PREVIEW=true`) - this is the default
+
+**Deploy to Cloudflare Button Issues (Chat Interface)**:
+- **"Deploy button not working locally"**: Chat interface deploy button requires custom domain, initial deployment, and remote dispatch bindings
+- **"Dispatch namespace not found"**: Deploy your VibSDK project to Cloudflare at least once first
+- **"Deploy fails with authentication error"**: Ensure your custom domain is properly configured and deployed
+- **Note**: This refers to deploying generated apps from the chat interface, not GitHub repository deployments
+
 ### Getting Help
 
 1. Check the setup report for specific issues and suggestions
@@ -206,7 +279,7 @@ If you only set up for local development initially, you can configure production
 Alternatively, create `.prod.vars` manually based on `.dev.vars` but with:
 - Production domain in `CUSTOM_DOMAIN`
 - Production API keys and secrets
-- `ENVIRONMENT="production"`
+- `ENVIRONMENT="prod"`
 
 ## Next Steps
 
@@ -233,6 +306,76 @@ vibesdk/
 
 ## Summary
 
-The VibSDK setup script automates the entire configuration process, from Cloudflare resource creation to database setup. It supports both local-only development and full production deployment configuration, making it easy to get started regardless of your Cloudflare plan or requirements.
+The VibSDK setup script provides a comprehensive, intelligent configuration experience:
 
-For any issues during setup, check the troubleshooting section above or refer to the comprehensive status report the script provides at the end. If issue persists, please open an issue on GitHub with the status report and any additional information you think would be helpful.
+### **Key Features:**
+- **Simplified domain setup** - One-time domain configuration with clear feature implications
+- **Intelligent AI provider selection** - Multi-provider support with automatic configuration
+- **AI Gateway automation** - Automatic token setup and configuration
+- **Custom provider support** - Dynamic API key generation and worker configuration updates  
+- **Production-ready** - Both local development and production deployment configuration
+- **User-friendly defaults** - Y/n prompts with clear default indicators
+
+### **What Gets Configured:**
+- Cloudflare resources (KV, D1, R2, AI Gateway, dispatch namespaces)
+- Environment variables (.dev.vars and .prod.vars)
+- Worker configuration (wrangler.jsonc, worker-configuration.d.ts)
+- Database setup and migrations
+- Template deployment
+- ARM64 compatibility
+
+The setup script handles everything from basic Cloudflare resource creation to advanced AI provider configuration, making it easy to get started regardless of your Cloudflare plan or AI provider preferences.
+
+For any issues during setup, check the troubleshooting section above or refer to the comprehensive status report the script provides at the end.
+
+## Important Caveats & Known Issues
+
+### **Local Development with Cloudflared Tunnels**
+
+**Default Behavior**: Local development uses cloudflared tunnels by default (`USE_TUNNEL_FOR_PREVIEW=true`)
+
+**Why Tunnels?**
+- **MacBook compatibility**: Cloudflare sandbox SDK Docker images have issues with multiple exposed ports on macOS
+- **Simplified networking**: Avoids complex localhost proxying setup
+- **Quick development**: Provides immediate external access for testing
+
+**Tunnel Limitations**:
+- **Startup time**: Tunnel creation can take 10-20 seconds
+- **Timeouts**: Tunnel creation may timeout occasionally (this is normal)
+- **External dependency**: Requires internet connection and cloudflare.com access
+
+### **"Deploy to Cloudflare" Button Limitations (Chat Interface)**
+
+The "Deploy to Cloudflare" button in the chat interface (for generated apps) has specific requirements for local development:
+
+> **Note**: This refers to the deployment button within the VibSDK platform's chat interface, not the GitHub repository deploy button.
+
+**Requirements**:
+1. **Custom domain** must be properly configured during setup
+2. **Initial deployment** - Project must be deployed at least once to your Cloudflare account
+3. **Remote dispatch bindings** - `wrangler.jsonc` must have remote dispatch namespace enabled
+4. **Dispatch worker** - A dispatch worker must be running in your account
+
+**Why These Requirements?**
+- The deploy feature uses Cloudflare's dispatch namespace system
+- Dispatch requires a running worker in your account to handle deployment requests
+- Local-only development isn't yet supported for this in vibesdk
+
+**Current Status**: Making "Deploy to Cloudflare" work completely in local-only mode is not yet implemented.
+
+### **Sandbox Instance Behavior**
+
+**Normal Behavior**:
+- **Instance restarts**: Sandbox deployments may occasionally die and restart
+- **Temporary failures**: Short-term deployment failures are expected
+- **Self-healing**: The system will retry and recover automatically
+
+**When to Be Concerned**:
+- Consistent failures over 5+ minutes
+- Complete inability to create instances
+- Persistent networking issues
+
+**What's Normal**:
+- Individual instance failures that resolve quickly
+- Occasional tunnel connection issues
+- Brief periods of unavailability during restarts If issue persists, please open an issue on GitHub with the status report and any additional information you think would be helpful.

@@ -5,6 +5,7 @@ import { extractTokenWithMetadata, extractRequestMetadata } from '../../utils/au
 import { captureSecurityEvent } from '../../observability/sentry';
 import { KVRateLimitStore } from './KVRateLimitStore';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
+import { isDev } from 'worker/utils/envs';
 
 export class RateLimitService {
     static logger = createObjectLogger(this, 'RateLimitService');
@@ -79,7 +80,7 @@ export class RateLimitService {
         limitType: RateLimitType
     ) : Promise<boolean> {
         // If dev, don't enforce
-        if (env.ENVIRONMENT === 'dev') {
+        if (isDev(env)) {
             return true;
         }
         const rateLimitConfig = config[limitType];
