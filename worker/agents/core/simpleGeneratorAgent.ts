@@ -9,7 +9,7 @@ import {
 import { GitHubPushRequest, PreviewType, StaticAnalysisResponse, TemplateDetails } from '../../services/sandbox/sandboxTypes';
 import {  GitHubExportResult } from '../../services/github/types';
 import { CodeGenState, CurrentDevState, MAX_PHASES, FileState } from './state';
-import { AllIssues, AgentSummary, ScreenshotData, AgentInitArgs, PhaseExecutionResult, UserContext } from './types';
+import { AllIssues, AgentSummary, AgentInitArgs, PhaseExecutionResult, UserContext } from './types';
 import { MAX_DEPLOYMENT_RETRIES, PREVIEW_EXPIRED_ERROR, WebSocketMessageResponses } from '../constants';
 import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage } from './websocket';
 import { createObjectLogger, StructuredLogger } from '../../logger';
@@ -2461,6 +2461,16 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         url: string, 
         viewport: { width: number; height: number } = { width: 1280, height: 720 }
     ): Promise<string> {
+        if (!this.env.DB || !this.getAgentId()) {
+            const error = 'Cannot capture screenshot: DB or agentId not available';
+            this.logger().warn(error);
+            this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
+                error,
+                configurationError: true
+            });
+            throw new Error(error);
+        }
+
         if (!url) {
             const error = 'URL is required for screenshot capture';
             this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
@@ -2495,7 +2505,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     viewport: viewport,
                     gotoOptions: {
                         waitUntil: 'networkidle0',
-                        timeout: 30000
+                        timeout: 10000
                     },
                     screenshotOptions: {
                         fullPage: false,
@@ -2514,6 +2524,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     statusCode: response.status,
                     statusText: response.statusText
                 });
+                // If error is 422 timeout, retry deploying
+                if (response.status === 422) {
+                    this.deployToSandbox();
+                }
                 throw new Error(error);
             }
             
@@ -2613,53 +2627,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }
             
             throw new Error(`Screenshot capture failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-    }
-
-
-    /**
-     * Save screenshot data to database - now triggers server-side screenshot capture
-     */
-    public async saveScreenshotToDatabase(screenshotData: ScreenshotData): Promise<void> {
-        if (!this.env.DB || !this.getAgentId()) {
-            const error = 'Cannot capture screenshot: DB or agentId not available';
-            this.logger().warn(error);
-            this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
-                error,
-                url: screenshotData.url,
-                viewport: screenshotData.viewport,
-                configurationError: true
-            });
-            return;
-        }
-
-        try {
-            // Trigger server-side screenshot capture via REST API
-            const screenshotUrl = await this.captureScreenshot(
-                screenshotData.url,
-                screenshotData.viewport
-            );
-
-            this.logger().info('Screenshot captured and saved successfully', {
-                url: screenshotData.url,
-                viewport: screenshotData.viewport,
-                timestamp: screenshotData.timestamp,
-                screenshotUrl
-            });
-            
-            // // Update agent state with latest screenshot
-            // this.setState({
-            //     ...this.state,
-            //     latestScreenshot: {
-            //         ...screenshotData,
-            //         screenshot: screenshotUrl // Store base64 data URL
-            //     }
-            // });
-            
-        } catch (error) {
-            this.logger().error('Failed to capture and save screenshot:', error);
-            // Error was already broadcast by captureScreenshot method
-            // Don't throw - we don't want screenshot failures to break the generation flow
         }
     }
 

@@ -676,12 +676,14 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             const newMessages = [
                 ...(toolCallContext?.messages || []),
                 { role: "assistant" as MessageRole, content, tool_calls: toolCalls },
-                ...executedToolCalls.map((result, _) => ({
-                    role: "tool" as MessageRole,
-                    content: JSON.stringify(result.result),
-                    name: result.name,
-                    tool_call_id: result.id,
-                })),
+                ...executedToolCalls
+                    .filter(result => result.name && result.name.trim() !== '')
+                    .map((result, _) => ({
+                        role: "tool" as MessageRole,
+                        content: JSON.stringify(result.result),
+                        name: result.name,
+                        tool_call_id: result.id,
+                    })),
             ];
 
             const newDepth = (toolCallContext?.depth ?? 0) + 1;

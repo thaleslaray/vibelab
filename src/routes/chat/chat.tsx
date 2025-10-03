@@ -15,7 +15,7 @@ import { Blueprint } from './components/blueprint';
 import { FileExplorer } from './components/file-explorer';
 import { UserMessage, AIMessage } from './components/messages';
 import { PhaseTimeline } from './components/phase-timeline';
-import { SmartPreviewIframe } from './components/smart-preview-iframe';
+import { PreviewIframe } from './components/preview-iframe';
 import { ViewModeSwitch } from './components/view-mode-switch';
 import { DebugPanel, type DebugMessage } from './components/debug-panel';
 import { DeploymentControls } from './components/deployment-controls';
@@ -832,7 +832,7 @@ export default function Chat() {
 											</button>
 										</div>
 									</div>
-									<SmartPreviewIframe
+									<PreviewIframe
 										src={previewUrl}
 										ref={previewRef}
 										className="flex-1 w-full h-full border-0"
@@ -844,10 +844,6 @@ export default function Chat() {
 											manualRefreshTrigger
 										}
 										webSocket={websocket}
-										phaseTimelineLength={
-											phaseTimeline.length
-										}
-										devMode={true}
 									/>
 								</div>
 							)}

@@ -79,7 +79,7 @@ export const WebSocketMessageRequests = {
     UPDATE_QUERY: 'update_query',
     RUNTIME_ERROR_FOUND: 'runtime_error_found',
     PREVIEW_FAILED: 'preview_failed',
-    SCREENSHOT_CAPTURED: 'screenshot_captured',
+    CAPTURE_SCREENSHOT: 'capture_screenshot',
     STOP_GENERATION: 'stop_generation',
     RESUME_GENERATION: 'resume_generation',
     
