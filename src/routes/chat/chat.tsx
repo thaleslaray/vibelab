@@ -210,7 +210,6 @@ export default function Chat() {
 	const countWords = (text: string): number => {
 		return text.trim().split(/\s+/).filter(word => word.length > 0).length;
 	};
-	const wordCount = useMemo(() => countWords(newMessage), [newMessage]);
 
 	const { images, addImages, removeImage, clearImages, isProcessing } = useImageUpload({
 		onError: (error) => {
@@ -731,12 +730,6 @@ export default function Chat() {
 									<ArrowRight className="size-4" />
 								</button>
 							</div>
-							{/* Word counter */}
-							{newMessage.length > 0 && (
-								<div className={`mt-1 text-xs text-right ${wordCount > MAX_WORDS * 0.9 ? 'text-accent' : 'text-text-tertiary'}`}>
-									{wordCount} / {MAX_WORDS} words
-								</div>
-							)}
 						</div>
 					</form>
 				</motion.div>
