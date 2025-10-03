@@ -1348,6 +1348,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         if (stateHasDeprecatedProps) {
             needsMigration = true;
         }
+
+        // Check if projectUpdatesAccumulator is not in state
+        const stateHasProjectUpdatesAccumulator = 'projectUpdatesAccumulator' in (this.state as any);
+        if (!stateHasProjectUpdatesAccumulator) {
+            needsMigration = true;
+        }
         
         // Apply migration if needed
         if (needsMigration) {
@@ -1363,7 +1369,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 generatedFilesMap: migratedFilesMap,
                 templateDetails: migratedTemplateDetails,
                 conversationMessages: migratedConversationMessages,
-                inferenceContext: migratedInferenceContext
+                inferenceContext: migratedInferenceContext,
+                projectUpdatesAccumulator: []
             };
             
             // Remove deprecated properties
@@ -1972,7 +1979,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     private async getAndResetProjectUpdates() {
-        const projectUpdates = this.state.projectUpdatesAccumulator;
+        const projectUpdates = this.state.projectUpdatesAccumulator || [];
         this.setState({
             ...this.state,
             projectUpdatesAccumulator: []

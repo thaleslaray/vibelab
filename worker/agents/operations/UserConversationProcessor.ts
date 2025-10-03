@@ -182,9 +182,12 @@ const USER_PROMPT = `
 
 
 function buildUserMessageWithContext(userMessage: string, errors: RuntimeError[], projectUpdates: string[], forInference: boolean): string {
-    const userPrompt = USER_PROMPT.replace("{{timestamp}}", new Date().toISOString()).replace("{{userMessage}}", userMessage)
+    let userPrompt = USER_PROMPT.replace("{{timestamp}}", new Date().toISOString()).replace("{{userMessage}}", userMessage)
     if (forInference) {
-        return userPrompt.replace("{{projectUpdates}}", projectUpdates.join("\n\n")).replace("{{errors}}", PROMPT_UTILS.serializeErrors(errors));
+        if (projectUpdates && projectUpdates.length > 0) {
+            userPrompt = userPrompt.replace("{{projectUpdates}}", projectUpdates.join("\n\n"));
+        }
+        return userPrompt.replace("{{errors}}", PROMPT_UTILS.serializeErrors(errors));
     } else {
         // To save tokens
         return userPrompt.replace("{{projectUpdates}}", "redacted").replace("{{errors}}", "redacted");
@@ -418,7 +421,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                 tools, // Enable tools for the conversational AI
                 stream: {
                     onChunk: (chunk) => {
-                        logger.info("Processing user message chunk", { chunkLength: chunk.length });
+                        logger.info("Processing user message chunk", { chunkLength: chunk.length, aiConversationId });
                         inputs.conversationResponseCallback(chunk, aiConversationId, true);
                         extractedUserResponse += chunk;
                     },
