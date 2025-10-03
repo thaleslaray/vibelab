@@ -1271,7 +1271,7 @@ class CloudflareDeploymentManager {
 		const sandboxInstanceType = 
 			process.env.SANDBOX_INSTANCE_TYPE || 
 			this.config.vars?.SANDBOX_INSTANCE_TYPE || 
-			'standard';
+			'standard-3';
 
 		console.log(
 			`🔧 Configuring container instance types: ${sandboxInstanceType}`,
