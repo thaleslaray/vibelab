@@ -181,7 +181,7 @@ OAuth configuration is **not** shown on the initial deploy page. If you want use
 2. Click **New OAuth App**
 3. Application name: `Cloudflare VibeSDK`
 4. Homepage URL: `https://your-worker-name.workers.dev`
-5. Authorization callback URL: `https://your-worker-name.workers.dev/api/auth/github/callback`
+5. Authorization callback URL: `https://your-worker-name.workers.dev/api/auth/callback/github`
 6. Add to **both** `.dev.vars` (for local development) and `.prod.vars` (for deployment):
    ```bash
    GITHUB_CLIENT_ID="your-github-client-id"
@@ -190,7 +190,7 @@ OAuth configuration is **not** shown on the initial deploy page. If you want use
 
 **GitHub Export OAuth Setup:**
 1. Create a separate GitHub OAuth app (e.g., `VibeSDK Export`)—do not reuse the login app above.
-2. Authorization callback URL: `https://your-worker-name.workers.dev/api/export/github/callback` (or your custom domain equivalent).
+2. Authorization callback URL: `https://your-worker-name.workers.dev/api/github-exporter/callback` (or your custom domain equivalent).
 3. Add to **both** `.dev.vars` and `.prod.vars`:
    ```bash
    GITHUB_EXPORTER_CLIENT_ID="your-export-client-id"
