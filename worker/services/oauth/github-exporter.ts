@@ -42,10 +42,12 @@ export class GitHubExporterOAuthProvider extends GitHubOAuthProvider {
         }
     }
     
-    static create(env: Env, redirectUri: string): GitHubExporterOAuthProvider {
+    static create(env: Env, baseUrl: string): GitHubExporterOAuthProvider {
         if (!env.GITHUB_EXPORTER_CLIENT_ID || !env.GITHUB_EXPORTER_CLIENT_SECRET) {
             throw new Error('GitHub App OAuth credentials not configured');
         }
+
+        const redirectUri = `${baseUrl}/api/github-exporter/callback`;
         
         return new GitHubExporterOAuthProvider(
             env.GITHUB_EXPORTER_CLIENT_ID,
