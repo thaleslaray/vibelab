@@ -74,10 +74,7 @@ export class GitHubExporterController extends BaseController {
             const { userId, purpose, agentId, exportData, returnUrl } = parsedState;
 
             const baseUrl = new URL(request.url).origin;
-            const oauthProvider = GitHubExporterOAuthProvider.create(
-                env,
-                `${baseUrl}/api/github-exporter/callback`
-            );
+            const oauthProvider = GitHubExporterOAuthProvider.create(env, baseUrl);
 
             const tokenResult = await oauthProvider.exchangeCodeForTokens(code);
 
@@ -246,10 +243,7 @@ export class GitHubExporterController extends BaseController {
             };
 
             const baseUrl = new URL(request.url).origin;
-            const oauthProvider = GitHubExporterOAuthProvider.create(
-                env,
-                `${baseUrl}/api/github-exporter/callback`
-            );
+            const oauthProvider = GitHubExporterOAuthProvider.create(env, baseUrl);
 
             const authUrl = await oauthProvider.getAuthorizationUrl(
                 Buffer.from(JSON.stringify(state)).toString('base64')

@@ -108,12 +108,15 @@ VibeSDK uses Cloudflare Containers to run generated applications in isolated env
 
 #### Available Instance Types
 
+> **📢 Updated Oct 2025**: Cloudflare now offers [larger container instance types](https://developers.cloudflare.com/changelog/2025-10-01-new-container-instance-types/) with more resources!
+
 | Instance Type | Memory | CPU | Disk | Use Case | Availability |
 |---------------|--------|-----|------|----------|--------------|
-| `dev` | 256 MiB | 1/16 vCPU | 2 GB | Development/testing | All plans |
-| `basic` | 1 GiB | 1/4 vCPU | 4 GB | Light applications | All plans |
-| `standard` | 4 GiB | 1/2 vCPU | 4 GB | Most applications | All plans (**Default**) |
-| `enhanced` | 4 GiB | 4 vCPUs | 10 GB | High-performance apps | Enterprise customers only |
+| `lite` (alias: `dev`) | 256 MiB | 1/16 vCPU | 2 GB | Development/testing | All plans |
+| `standard-1` (alias: `standard`) | 4 GiB | 1/2 vCPU | 8 GB | Light production apps | All plans |
+| `standard-2` | 8 GiB | 1 vCPU | 12 GB | Medium workloads | All plans |
+| `standard-3` | 12 GiB | 2 vCPU | 16 GB | Production apps | All plans (**Default**) |
+| `standard-4` | 12 GiB | 4 vCPU | 20 GB | High-performance apps | All plans |
 
 #### Configuration Options
 
@@ -121,26 +124,21 @@ VibeSDK uses Cloudflare Containers to run generated applications in isolated env
 During the "Deploy to Cloudflare" flow, you can set the instance type as a **build variable**:
 - Variable name: `SANDBOX_INSTANCE_TYPE`
 - Recommended values:
-  - **Standard/Paid users**: `standard` (default)
-  - **Enterprise customers**: `enhanced`
+  - **Standard/Paid users**: `standard-3` (default, best balance)
+  - **High-performance needs**: `standard-4`
 
 **Option B: Via Environment Variable**
 For local deployment or CI/CD, set the environment variable:
 ```bash
-export SANDBOX_INSTANCE_TYPE=standard  # or enhanced, basic, dev
+export SANDBOX_INSTANCE_TYPE=standard-3  # or standard-4, standard-2, standard-1, lite
 bun run deploy
 ```
 
 #### Instance Type Selection Guide
 
-**For Standard/Paid Users:**
-- **`standard`** (Recommended) - Best balance of performance and resource usage
-- **`basic`** - For simple applications or testing
-- **`dev`** - Minimal resources for development only
-
-**For Enterprise Customers:**
-- **`enhanced`** (Recommended) - Maximum performance with full CPU cores and extra disk space
-- **`standard`** - If you prefer conservative resource usage
+**For All Users:**
+- **`standard-3`** (Recommended) - Best balance for production apps with 2 vCPU and 12 GiB memory
+- **`standard-4`** - Maximum performance with 4 vCPU for compute-intensive applications
 
 #### What This Affects
 
@@ -150,9 +148,7 @@ The `SANDBOX_INSTANCE_TYPE` controls:
 - **Concurrent App Capacity** - How many apps can run simultaneously
 - **Resource Availability** - Memory and disk space for complex applications
 
-> **💡 Pro Tip**: Start with `standard` and upgrade to `enhanced` if you notice performance issues with complex applications or need faster build times.
-
-> **⚠️ Enterprise Required**: The `enhanced` instance type requires a Cloudflare Enterprise plan. Using it on other plans may result in deployment failures.
+> **💡 Pro Tip**: Start with `standard-3` (the new default) for the best balance of performance and resources. Upgrade to `standard-4` if you need maximum CPU performance for compute-intensive applications.
 
 ### 🔗 Post-Deployment: OAuth Setup (Optional)
 
@@ -181,7 +177,7 @@ OAuth configuration is **not** shown on the initial deploy page. If you want use
 2. Click **New OAuth App**
 3. Application name: `Cloudflare VibeSDK`
 4. Homepage URL: `https://your-worker-name.workers.dev`
-5. Authorization callback URL: `https://your-worker-name.workers.dev/api/auth/github/callback`
+5. Authorization callback URL: `https://your-worker-name.workers.dev/api/auth/callback/github`
 6. Add to **both** `.dev.vars` (for local development) and `.prod.vars` (for deployment):
    ```bash
    GITHUB_CLIENT_ID="your-github-client-id"
@@ -190,7 +186,7 @@ OAuth configuration is **not** shown on the initial deploy page. If you want use
 
 **GitHub Export OAuth Setup:**
 1. Create a separate GitHub OAuth app (e.g., `VibeSDK Export`)—do not reuse the login app above.
-2. Authorization callback URL: `https://your-worker-name.workers.dev/api/export/github/callback` (or your custom domain equivalent).
+2. Authorization callback URL: `https://your-worker-name.workers.dev/api/github-exporter/callback` (or your custom domain equivalent).
 3. Add to **both** `.dev.vars` and `.prod.vars`:
    ```bash
    GITHUB_EXPORTER_CLIENT_ID="your-export-client-id"
@@ -306,39 +302,46 @@ DNS updates made during setup, including the wildcard CNAME record described abo
 
 ## 🏠 Local Development
 
-### Prerequisites
-- Node.js 18+ and Bun
-- Cloudflare account with Workers paid plan
-
 ### Quick Setup
-```bash
-# Clone your repository (or this repo)
-git clone https://github.com/your-username/your-vibe-sdk-fork.git
-cd your-vibe-sdk-fork
-bun install
 
-# Set up local database
-bun run db:generate
-bun run db:migrate:local
+You can run VibeSDK locally by following these steps:
+
+```bash
+# Clone the repository
+git clone https://github.com/cloudflare/vibesdk.git
+cd vibesdk
+
+# Install dependencies
+npm install  # or: bun install, yarn install, pnpm install
+
+# Run automated setup
+npm run setup  # or: bun run setup
 ```
 
-### Environment Configuration
+The setup script will guide you through:
+- Installing Bun for better performance
+- Configuring Cloudflare credentials and resources
+- Setting up AI providers and OAuth
+- Creating development and production environments
+- Database setup and migrations
+- Template deployment
 
-**For Local Development (.dev.vars):**
+**[📖 Complete Setup Guide](docs/setup.md)** - Detailed setup instructions and troubleshooting
+
+### Development Server
+
+After setup, start the development server:
+
 ```bash
-cp .dev.vars.example .dev.vars
-# Edit .dev.vars with your API keys and tokens
+bun run dev
 ```
 
-**For Production Deployment (.prod.vars):**
-```bash
-cp .dev.vars.example .prod.vars  
-# Edit .prod.vars with your production API keys and tokens
-```
+Visit `http://localhost:5173` to access VibSDK locally.
 
-> **Important**: Local development uses `.dev.vars`, but `bun run deploy` only reads from `.prod.vars` for deployment secrets.
+### Production Deployment
 
-### Deploy to Cloudflare
+Deploy to Cloudflare Workers:
+
 ```bash
 bun run deploy  # Builds and deploys automatically (includes remote DB migration)
 ```
@@ -418,10 +421,10 @@ Cloudflare VibeSDK implements enterprise-grade security:
   3. Enable authentication and create a token with **Run** permissions
 
 **🏗️ "Container Instance Type Issues"**
-- **"enhanced" fails on non-Enterprise plans**: Use `standard` instead - `enhanced` requires Cloudflare Enterprise
-- **Slow app previews**: Try upgrading from `dev` or `basic` to `standard` instance type
-- **Out of memory errors**: Upgrade to higher instance type or check for memory leaks in generated apps
-- **Build timeouts**: Use `enhanced` instance type (Enterprise) or `standard` for faster build times
+- **Slow app previews**: Try upgrading from `lite`/`standard-1` to `standard-3` (default) or `standard-4` instance type
+- **Out of memory errors**: Upgrade to a higher instance type (e.g., from `standard-2` to `standard-3` or `standard-4`) or check for memory leaks in generated apps
+- **Build timeouts**: Use `standard-3` or `standard-4` for faster build times with more CPU cores
+- **Using legacy types**: The `dev` and `standard` aliases still work but map to `lite` and `standard-1` respectively
 
 ### Need Help?
 

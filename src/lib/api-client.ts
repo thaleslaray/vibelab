@@ -340,44 +340,40 @@ class ApiClient {
 			const data = await response.json() as ApiResponse<T>;
 
 			if (!response.ok) {
-                // Try parsing error data
-                try {
-                    if (
-                        response.status === 401 &&
-                        globalAuthModalTrigger &&
-                        this.shouldTriggerAuthModal(endpoint)
-                    ) {
-                        const authContext = this.getAuthContextForEndpoint(endpoint);
-                        globalAuthModalTrigger(authContext);
-                    }
+                if (
+                    response.status === 401 &&
+                    globalAuthModalTrigger &&
+                    this.shouldTriggerAuthModal(endpoint)
+                ) {
+                    const authContext = this.getAuthContextForEndpoint(endpoint);
+                    globalAuthModalTrigger(authContext);
+                }
 
-                    const errorData = data.error;
-                    if (errorData && errorData.type) {
-                        // Send a toast notification for typed errors
-                        if (!noToast) {
-                            toast.error(errorData.message);
-                        }
-                        switch (errorData.type) {
-                            case SecurityErrorType.CSRF_VIOLATION:
-                                // Handle CSRF failures with retry
-                                if (response.status === 403 && !isRetry) {
-                                    // Clear expired token and retry with fresh one
-                                    this.csrfTokenInfo = null;
-                                    return this.requestRaw(endpoint, options, noToast);
-                                }
-                                break;
-                            case SecurityErrorType.RATE_LIMITED:
-                                // Handle rate limiting
-                                // Send toast
-                                if (!noToast) {
-                                    toast.error(errorData.message);
-                                }
-                                throw RateLimitExceededError.fromRateLimitError((errorData as RateLimitErrorResponse).details);
-                            default:
-                                // Security error
-                                throw new SecurityError(errorData.type, errorData.message);
+                const errorData = data.error;
+                if (errorData && errorData.type) {
+                       // Send a toast notification for typed errors
+                    if (!noToast) {
+                        toast.error(errorData.message);
+                    }
+                    switch (errorData.type) {
+                        case SecurityErrorType.CSRF_VIOLATION:
+                            // Handle CSRF failures with retry
+                            if (response.status === 403 && !isRetry) {
+                                // Clear expired token and retry with fresh one
+                                this.csrfTokenInfo = null;
+                                return this.requestRaw(endpoint, options, true);
+                            }
+                            break;
+                        case SecurityErrorType.RATE_LIMITED:
+                            // Handle rate limiting
+                            console.log('Rate limited', errorData);
+                            throw RateLimitExceededError.fromRateLimitError((errorData as RateLimitErrorResponse).details);
+                        default:
+                            // Security error
+                            throw new SecurityError(errorData.type, errorData.message);
                         }
                     }
+                    console.log("Came here");
 
                     throw new ApiError(
                         response.status,
@@ -385,19 +381,12 @@ class ApiClient {
                         data.error?.message || data.message || 'Request failed',
                         endpoint,
                     );
-                } catch {
-                    throw new ApiError(
-                        response.status,
-                        response.statusText,
-                        'Request failed',
-                        endpoint,
-                    );
-                }
 			}
 
-		return { response, data };
+		    return { response, data };
 		} catch (error) {
-			if (error instanceof ApiError) {
+			if (error instanceof ApiError || error instanceof RateLimitExceededError || error instanceof SecurityError) {
+                console.error(error);
 				throw error;
 			}
 			throw new ApiError(

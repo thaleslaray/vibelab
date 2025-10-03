@@ -5,6 +5,7 @@
 
 import { DEFAULT_RATE_LIMIT_SETTINGS, RateLimitSettings } from "../services/rate-limit/config";
 import { Context } from "hono";
+import { isDev } from "../utils/envs";
 
 // Type definitions for security configurations
 export interface CORSConfig {
@@ -47,7 +48,7 @@ function getAllowedOrigins(env: Env): string[] {
     }
     
     // Development origins (only in development)
-    if (env.ENVIRONMENT === 'dev') {
+    if (isDev(env)) {
         origins.push('http://localhost:3000');
         origins.push('http://localhost:5173');
         origins.push('http://localhost:8787');
@@ -149,7 +150,7 @@ interface SecureHeadersConfig {
  * Comprehensive security headers with CSP
  */
 export function getSecureHeadersConfig(env: Env): SecureHeadersConfig {
-    const isDevelopment = env.ENVIRONMENT === 'dev';
+    const isDevelopment = isDev(env);
     
     return {
         // Content Security Policy - strict by default

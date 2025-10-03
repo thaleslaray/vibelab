@@ -29,6 +29,7 @@ declare namespace Cloudflare {
 		JWT_SECRET: string;
 		ENTROPY_KEY: string;
 		ENVIRONMENT: string;
+        USE_TUNNEL_FOR_PREVIEW: boolean;
 		SECRETS_ENCRYPTION_KEY: string;
 		MAX_SANDBOX_INSTANCES: string;
 		SANDBOX_INSTANCE_TYPE: string;

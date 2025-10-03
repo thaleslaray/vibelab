@@ -60,8 +60,10 @@ export function createApp(env: Env): Hono<AppEnv> {
         } catch (error) {
             if (error instanceof SecurityError && error.type === SecurityErrorType.CSRF_VIOLATION) {
                 return new Response(JSON.stringify({ 
-                    error: 'CSRF validation failed',
-                    code: 'CSRF_VIOLATION'
+                    error: { 
+                        message: 'CSRF validation failed',
+                        type: SecurityErrorType.CSRF_VIOLATION
+                    }
                 }), {
                     status: 403,
                     headers: { 'Content-Type': 'application/json' }

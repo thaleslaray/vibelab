@@ -205,7 +205,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         // Build a public URL served via Worker route
         const fileName = key.split('/').pop() as string;
         const protocol = getProtocolForHost(this.state.hostname);
-        const base = this.state.hostname ? `${protocol}://${this.state.hostname}` : '';
+        const base = `${protocol}://${this.env.CUSTOM_DOMAIN}`;
         const agentId = this.state.inferenceContext.agentId;
         const url = `${base}/api/screenshots/${encodeURIComponent(agentId)}/${encodeURIComponent(fileName)}`;
         return url;
