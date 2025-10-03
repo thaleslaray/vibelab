@@ -306,39 +306,46 @@ DNS updates made during setup, including the wildcard CNAME record described abo
 
 ## 🏠 Local Development
 
-### Prerequisites
-- Node.js 18+ and Bun
-- Cloudflare account with Workers paid plan
-
 ### Quick Setup
-```bash
-# Clone your repository (or this repo)
-git clone https://github.com/your-username/your-vibe-sdk-fork.git
-cd your-vibe-sdk-fork
-bun install
 
-# Set up local database
-bun run db:generate
-bun run db:migrate:local
+You can run VibeSDK locally by following these steps:
+
+```bash
+# Clone the repository
+git clone https://github.com/cloudflare/vibesdk.git
+cd vibesdk
+
+# Install dependencies
+npm install  # or: bun install, yarn install, pnpm install
+
+# Run automated setup
+npm run setup  # or: bun run setup
 ```
 
-### Environment Configuration
+The setup script will guide you through:
+- Installing Bun for better performance
+- Configuring Cloudflare credentials and resources
+- Setting up AI providers and OAuth
+- Creating development and production environments
+- Database setup and migrations
+- Template deployment
 
-**For Local Development (.dev.vars):**
+**[📖 Complete Setup Guide](docs/setup.md)** - Detailed setup instructions and troubleshooting
+
+### Development Server
+
+After setup, start the development server:
+
 ```bash
-cp .dev.vars.example .dev.vars
-# Edit .dev.vars with your API keys and tokens
+bun run dev
 ```
 
-**For Production Deployment (.prod.vars):**
-```bash
-cp .dev.vars.example .prod.vars  
-# Edit .prod.vars with your production API keys and tokens
-```
+Visit `http://localhost:5173` to access VibSDK locally.
 
-> **Important**: Local development uses `.dev.vars`, but `bun run deploy` only reads from `.prod.vars` for deployment secrets.
+### Production Deployment
 
-### Deploy to Cloudflare
+Deploy to Cloudflare Workers:
+
 ```bash
 bun run deploy  # Builds and deploys automatically (includes remote DB migration)
 ```

@@ -81,7 +81,7 @@ export async function getTemplateForQuery(
     // Fetch available templates
     const templatesResponse = await SandboxSdkClient.listTemplates();
     if (!templatesResponse || !templatesResponse.success) {
-        throw new Error('Failed to fetch templates from sandbox service');
+        throw new Error(`Failed to fetch templates from sandbox service, ${templatesResponse.error}`);
     }
 
     const sandboxSessionId = generateId();
