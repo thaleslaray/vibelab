@@ -204,6 +204,13 @@ export default function Chat() {
 
 	const [newMessage, setNewMessage] = useState('');
 	const [showTooltip, setShowTooltip] = useState(false);
+	
+	// Word count utilities
+	const MAX_WORDS = 4000;
+	const countWords = (text: string): number => {
+		return text.trim().split(/\s+/).filter(word => word.length > 0).length;
+	};
+	const wordCount = useMemo(() => countWords(newMessage), [newMessage]);
 
 	const { images, addImages, removeImage, clearImages, isProcessing } = useImageUpload({
 		onError: (error) => {
@@ -661,10 +668,16 @@ export default function Chat() {
 						<textarea
 							value={newMessage}
 							onChange={(e) => {
-								setNewMessage(e.target.value);
-								const ta = e.currentTarget;
-								ta.style.height = 'auto';
-								ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+								const newValue = e.target.value;
+								const newWordCount = countWords(newValue);
+								
+								// Only update if within word limit
+								if (newWordCount <= MAX_WORDS) {
+									setNewMessage(newValue);
+									const ta = e.currentTarget;
+									ta.style.height = 'auto';
+									ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+								}
 							}}
 								onKeyDown={(e) => {
 									if (e.key === 'Enter') {
@@ -685,7 +698,7 @@ export default function Chat() {
 											: 'Ask a follow up...'
 								}
 								rows={1}
-								className="w-full bg-bg-2 border border-text-primary/10 rounded-xl px-3 pr-20 py-2 text-sm outline-none focus:border-white/20 drop-shadow-2xl text-text-primary placeholder:!text-text-primary/50 disabled:opacity-50 disabled:cursor-not-allowed resize-none overflow-y-auto no-scrollbar min-h-[36px] max-h-[120px]"
+								className="w-full bg-bg-2 border border-text-primary/10 rounded-xl px-3 pr-20 py-2 text-sm outline-none focus:border-white/20 drop-shadow-2xl text-text-primary placeholder:!text-text-primary/50 disabled:opacity-50 disabled:cursor-not-allowed resize-none overflow-y-scroll scrollbar-thin scrollbar-thumb-text-primary/20 scrollbar-track-transparent min-h-[36px] max-h-[120px]"
 								style={{
 									// Auto-resize based on content
 									height: 'auto',
@@ -718,6 +731,12 @@ export default function Chat() {
 									<ArrowRight className="size-4" />
 								</button>
 							</div>
+							{/* Word counter */}
+							{newMessage.length > 0 && (
+								<div className={`mt-1 text-xs text-right ${wordCount > MAX_WORDS * 0.9 ? 'text-accent' : 'text-text-tertiary'}`}>
+									{wordCount} / {MAX_WORDS} words
+								</div>
+							)}
 						</div>
 					</form>
 				</motion.div>
