@@ -10,9 +10,8 @@ import { IdGenerator } from '../utils/idGenerator';
 import { MAX_LLM_MESSAGES } from '../constants';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
 import type { ImageAttachment } from '../../types/image-attachment';
-import { toolWebSearchDefinition } from "../tools/toolkit/web-search";
-import { toolWeatherDefinition } from "../tools/toolkit/weather";
 import { ToolDefinition } from "../tools/types";
+import { buildTools } from "../tools/customTools";
 import { PROMPT_UTILS } from "../prompts";
 import { RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { CodeSerializerType } from "../utils/codeSerializers";
@@ -30,6 +29,7 @@ export interface UserConversationInputs {
         tool?: { name: string; status: 'start' | 'success' | 'error'; args?: Record<string, unknown> }
     ) => void;
     errors: RuntimeError[];
+    projectUpdates: string[];
     images?: ImageAttachment[];
 }
 
@@ -80,6 +80,7 @@ const SYSTEM_PROMPT = `You are Orange, an AI assistant for Cloudflare's AI power
         - RESPONSE: I'm sorry, but I can't assist with that. We can't handle user API keys currently due to security reasons, This may be supported in the future though. But you can export the codebase and deploy it with your keys yourself.
 
 Users may face issues, bugs and runtime errors. You won't have acceess to those, however you should just queue the request as is - the AI platform will be able to fetch the latest errors and fix them. You just need to communicate with it to activate it, using the queue_request tool.
+**You are not supposed to think of a solution or fix for the bug yourself! You are only an interface for the user with the platform. Relay the information along with any extra information you can find to the AI platform. Inform the user on behalf of the platform that 'you' are working on it.**
 
 ## How the AI vibecoding platform itself works:
     - Its a simple state machine:
@@ -117,67 +118,72 @@ I hope this description of the system is enough for you to understand your own r
 - Always acknowledge that implementation will happen "in the next development phase" to set expectations
 - Don't mention 'deveopment team' or stuff like that. Say "I'll add that" or "I'll make that change".
 
+# Examples:
+    Here is an example conversation of how you should respond:
+
+    User: "I want to add a button that shows the weather"
+    You should respond as if you're the one making the change:
+    You: "I'll add that" or "I'll make that change" -> call queue_request("add a button that shows the weather") tool -> "Done, would be done in a phase or two"
+    User: "The preview is not working! I don't see anything on my screen"
+    You: "It can happen sometimes. Please try refreshing the preview or the whole page again. If issue persists, let me know. I'll look into it."
+    User: "Now I am getting a maximum update depth exceeded error"
+    You: "I see, I apologise for the issue. Give me some time to try fix it" -> call queue_request("There is a critical maximum update depth exceeded error. Please look into it and fix URGENTLY.") tool -> "I hope its fixed by the next phase"
+    User: "Its still not fixed!"
+    You: "I understand. Clearly my previous changes weren't enough. Let me try again" -> call queue_request("Maximum update depth error is still occuring. Did you check the errors for the hint? Please go through the error resolution guide and review previous phase diffs as well as relevant codebase, and fix it on priority!") -> "I hope its fixed this time"
+
 We have also recently added support for image inputs in beta. User can guide app generation or show bugs/UI issues using image inputs. You may inform the user about this feature.
 But it has limitations - Images are not stored in any form. Thus they would be lost after some time. They are just cached in the runtime temporarily. 
 
 ## IMPORTANT GUIDELINES:
-- DO NOT generate or discuss code-level implementation details
+- DO NOT generate or discuss code-level implementation details. Do not try to solve bugs. You may generate ideas in a loop with the user though.
 - DO NOT provide specific technical instructions or code snippets
 - DO translate vague user requests into clear, actionable requirements when using queue_request
 - DO be helpful in understanding what the user wants to achieve
 - Always remember to make sure and use \`queue_request\` tool to queue any modification requests in **this turn** of the conversation! Not doing so will NOT queue up the changes.
 - You might have made modification requests earlier. Don't confuse previous tool results for the current turn.
-- You would know if you have correctly queued the request via the \`queue_request\` tool if you get the response of kind \`Modification request queued successfully...\`. If you don't get this response, then you have not queued the request correctly.
-- Only declare "Modification request queued successfully..." **after** you receive a tool result message from \`queue_request\` (role=tool) in **this turn** of the conversation. **Do not** mistake previous tool results for the current turn.
+- You would know if you have correctly queued the request via the \`queue_request\` tool if you get the response of kind \`queued successfully\`. If you don't get this response, then you have not queued the request correctly.
+- Only declare "request queued" **after** you receive a tool result message from \`queue_request\` (role=tool) in **this turn** of the conversation. **Do not** mistake previous tool results for the current turn.
 - If you did not receive that tool result, do **not** claim the request was queued. Instead say: "I'm preparing that now—one moment." and then call the tool.
 - Once you successfully make a tool call, it's response would be sent back to you. You can then acknowledge that the tool call was complete as mentioned above. Don't start repeating yourself or write similar response back to the user.
 - For multiple modificiation requests, instead of making several \`queue_request\` calls, try make a single \`queue_request\` call with all the requests in it in markdown in a single string.
-- Sometimes your request might be lost. If the user suggests so, Please try again, and specifiy in your request that you are trying again.
+- Sometimes your request might be lost. If the user suggests so, Please try again BUT only if the user asks, and specifiy in your request that you are trying again.
 - Always be concise, direct, to the point and brief to the user. You are a man of few words. Dont talk more than what's necessary to the user.
 
-You can also execute multiple tools in a sequence, for example, to search the web for a image, and then sending the image url to the queue_request tool to queue up the changes.
+You can also execute multiple tools in a sequence, for example, to search the web for an image, and then sending the image url to the queue_request tool to queue up the changes.
+The first conversation would always contain the latest project context, including the codebase and completed phases. Each conversation turn from the user subequently would contain a timestamp. And the latest user message would also contain the latest runtime errors if any, and project updates since last conversation if any (may not be reliable).
+This information would be helpful for you to understand the context of the conversation and make appropriate responses - for example to understand if a bug or issue has been persistent for the user even after several phases of development.
 
 ## Original Project query:
 {{query}}
-
-## Project runtime errors (if any):
-{{errors}}
 
 Remember: You're here to help users build great applications through natural conversation and the tools at your disposal. Communicate with the AI coding team transparently and clearly. For big changes, request them (via queue_request tool) to implement changes in multiple phases.`;
 
 const FALLBACK_USER_RESPONSE = "I understand you'd like to make some changes to your project. Let me make sure this is incorporated in the next phase of development.";
 
-interface EditAppArgs {
-    modificationRequest: string;
-}
+const USER_PROMPT = `
+<system_context>
+## Timestamp:
+{{timestamp}}
 
-interface EditAppResult {}
+## Project runtime errors:
+{{errors}}
 
-export function buildEditAppTool(stateMutator: (modificationRequest: string) => void): ToolDefinition<EditAppArgs, EditAppResult> {
-    return {
-        type: 'function' as const,
-        function: {
-            name: 'queue_request',
-            description: 'Queue up modification requests or changes, to be implemented in the next development phase',
-            parameters: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                    modificationRequest: {
-                        type: 'string',
-                        minLength: 8,
-                        description: 'The changes needed to be made to the app. Please don\'t supply any code level or implementation details. Provide detailed requirements and description of the changes you want to make.'
-                    }
-                },
-                required: ['modificationRequest']
-            }
-        },
-        implementation: async (args: EditAppArgs) => {
-            console.log("Queueing app edit request", args);
-            stateMutator(args.modificationRequest);
-            return {content: "queued successfully"};
-        }
-    };
+## Project updates since last conversation:
+{{projectUpdates}}
+</system_context>
+--------------
+{{userMessage}}
+`;
+
+
+function buildUserMessageWithContext(userMessage: string, errors: RuntimeError[], projectUpdates: string[], forInference: boolean): string {
+    const userPrompt = USER_PROMPT.replace("{{timestamp}}", new Date().toISOString()).replace("{{userMessage}}", userMessage)
+    if (forInference) {
+        return userPrompt.replace("{{projectUpdates}}", projectUpdates.join("\n\n")).replace("{{errors}}", PROMPT_UTILS.serializeErrors(errors));
+    } else {
+        // To save tokens
+        return userPrompt.replace("{{projectUpdates}}", "redacted").replace("{{errors}}", "redacted");
+    }
 }
 
 export class UserConversationProcessor extends AgentOperation<UserConversationInputs, UserConversationOutputs> {
@@ -314,8 +320,8 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
 
 
     async execute(inputs: UserConversationInputs, options: OperationOptions): Promise<UserConversationOutputs> {
-        const { env, logger, context } = options;
-        const { userMessage, pastMessages, errors, images } = inputs;
+        const { env, logger, context, agent } = options;
+        const { userMessage, pastMessages, errors, images, projectUpdates } = inputs;
         logger.info("Processing user message", { 
             messageLength: inputs.userMessage.length,
             hasImages: !!images && images.length > 0,
@@ -323,56 +329,51 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
         });
 
         try {
-            const systemPrompt = SYSTEM_PROMPT.replace("{{errors}}", PROMPT_UTILS.serializeErrors(errors));
-            const systemPromptMessages = getSystemPromptWithProjectContext(systemPrompt, context, CodeSerializerType.SIMPLE);
+            const systemPromptMessages = getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SIMPLE);
             
             // Create user message with optional images for inference
+            const userPromptForInference = buildUserMessageWithContext(userMessage, errors, projectUpdates, true);
             const userMessageForInference = images && images.length > 0
                 ? createMultiModalUserMessage(
-                    userMessage,
+                    userPromptForInference,
                     images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
                     'high'
                 )
-                : createUserMessage(userMessage);
+                : createUserMessage(userPromptForInference);
             
             // For conversation history, store only text (images are ephemeral and not persisted)
+            const userPromptForHistory = buildUserMessageWithContext(userMessage, errors, projectUpdates, false);
             const userMessageForHistory = images && images.length > 0
-                ? createUserMessage(`${userMessage}\n\n[${images.length} image(s) attached]`)
-                : createUserMessage(userMessage);
+                ? createUserMessage(`${userPromptForHistory}\n\n[${images.length} image(s) attached]`)
+                : createUserMessage(userPromptForHistory);
             
             const messages = [...pastMessages, {...userMessageForHistory, conversationId: IdGenerator.generateConversationId()}];
 
             let extractedUserResponse = "";
-            let extractedEnhancedRequest = "";
             
             // Generate unique conversation ID for this turn
             const aiConversationId = IdGenerator.generateConversationId();
 
             logger.info("Generated conversation ID", { aiConversationId });
-            // Get available tools for the conversation and attach lifecycle callbacks for chat updates
-            const attachLifecycle = <TArgs, TResult>(td: ToolDefinition<TArgs, TResult>): ToolDefinition<TArgs, TResult> => ({
+            
+            // Assemble all tools with lifecycle callbacks for UI updates
+            const tools: ToolDefinition<any, any>[] = [
+                ...buildTools(agent, logger)
+            ].map(td => ({
                 ...td,
-                onStart: (args: TArgs) => inputs.conversationResponseCallback(
+                onStart: (args: any) => inputs.conversationResponseCallback(
                     '',
                     aiConversationId,
                     false,
                     { name: td.function.name, status: 'start', args: args as Record<string, unknown> }
                 ),
-                onComplete: (args: TArgs, _result: TResult) => inputs.conversationResponseCallback(
+                onComplete: (args: any, _result: any) => inputs.conversationResponseCallback(
                     '',
                     aiConversationId,
                     false,
                     { name: td.function.name, status: 'success', args: args as Record<string, unknown> }
                 )
-            });
-            const tools = [
-                attachLifecycle(toolWebSearchDefinition),
-                attachLifecycle(toolWeatherDefinition),
-                attachLifecycle(buildEditAppTool((modificationRequest) => {
-                    logger.info("Received app edit request", { modificationRequest }); 
-                    extractedEnhancedRequest = modificationRequest;
-                }))
-            ];
+            }));
 
             const compactifiedMessages = await this.compactifyContext(pastMessages);
             if (compactifiedMessages.length !== pastMessages.length) {
@@ -413,11 +414,9 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             
             logger.info("Successfully processed user message", {
                 streamingSuccess: !!extractedUserResponse,
-                hasEnhancedRequest: !!extractedEnhancedRequest,
             });
 
             const conversationResponse: ConversationalResponseType = {
-                enhancedUserRequest: extractedEnhancedRequest,
                 userResponse: extractedUserResponse
             };
 
@@ -446,7 +445,6 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             // Fallback response
             return {
                 conversationResponse: {
-                    enhancedUserRequest: `User request: ${userMessage}`,
                     userResponse: FALLBACK_USER_RESPONSE
                 },
                 messages: [
