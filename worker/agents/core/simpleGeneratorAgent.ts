@@ -2445,7 +2445,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         } catch (error) {
             this.logger().error('Error handling user input:', error);
             if (error instanceof RateLimitExceededError) {
-                this.broadcast(WebSocketMessageResponses.RATE_LIMIT_ERROR, error);
+                this.logger().error('throwing Rate limit exceeded', error);
+                this.broadcast(WebSocketMessageResponses.RATE_LIMIT_ERROR, {
+                    error
+                });
                 return;
             }
             this.broadcast(WebSocketMessageResponses.ERROR, {

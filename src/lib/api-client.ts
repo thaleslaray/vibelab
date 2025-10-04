@@ -52,10 +52,10 @@ import type{
 	AuthProvidersResponseData,
 	CsrfTokenResponseData,
 	OAuthProvider,
-    RateLimitErrorResponse,
     CodeGenArgs,
     AgentPreviewResponse,
-    PlatformStatusData
+    PlatformStatusData,
+    RateLimitError
 } from '@/api-types';
 import {
     
@@ -367,7 +367,7 @@ class ApiClient {
                         case SecurityErrorType.RATE_LIMITED:
                             // Handle rate limiting
                             console.log('Rate limited', errorData);
-                            throw RateLimitExceededError.fromRateLimitError((errorData as RateLimitErrorResponse).details);
+                            throw RateLimitExceededError.fromRateLimitError(errorData as unknown as RateLimitError);
                         default:
                             // Security error
                             throw new SecurityError(errorData.type, errorData.message);
@@ -385,8 +385,8 @@ class ApiClient {
 
 		    return { response, data };
 		} catch (error) {
+            console.error(error);
 			if (error instanceof ApiError || error instanceof RateLimitExceededError || error instanceof SecurityError) {
-                console.error(error);
 				throw error;
 			}
 			throw new ApiError(
