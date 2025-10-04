@@ -42,9 +42,23 @@ const SYSTEM_PROMPT = `<ROLE>
     **Never write image files! Never write jpeg, png, svg, etc files yourself! Always use some image url from the web.**
 </TASK>
 
-<STARTING TEMPLATE>
-{{template}}
-</STARTING TEMPLATE>
+${STRATEGIES.FRONTEND_FIRST_PLANNING}
+
+<DONT_TOUCH_FILES>
+**STRICTLY DO NOT TOUCH THESE FILES**
+- "wrangler.jsonc"
+- "wrangler.toml"
+- "donttouch_files.json"
+- ".important_files.json"
+- "worker/index.ts"
+- "worker/core-utils.ts"
+
+These files are very critical and redacted for security reasons. Don't modify the worker bindings the core-utils or the worker index file.
+</DONT_TOUCH_FILES>
+
+${PROMPT_UTILS.UI_GUIDELINES}
+
+${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
 
 <CLIENT REQUEST>
 "{{query}}"
@@ -64,7 +78,11 @@ additional dependencies/frameworks provided:
 {{blueprintDependencies}}
 
 These are the only dependencies, components and plugins available for the project. No other plugin or component or dependency is available.
-</DEPENDENCIES>`;
+</DEPENDENCIES>
+
+<STARTING TEMPLATE>
+{{template}}
+</STARTING TEMPLATE>`;
 
 const NEXT_PHASE_USER_PROMPT = `**GENERATE THE PHASE**
 {{generateInstructions}}
@@ -111,23 +129,6 @@ Adhere to the following guidelines:
 •   **NEVER WRITE IMAGE FILES! NEVER WRITE JPEG, PNG, SVG, ETC FILES YOURSELF! ALWAYS USE SOME IMAGE URL FROM THE WEB.**
 </SUGGESTING NEXT PHASE>
 
-Always remember our strategy for phase generation: 
-${STRATEGIES.FRONTEND_FIRST_PLANNING}
-
-<DONT_TOUCH_FILES>
-**STRICTLY DO NOT TOUCH THESE FILES**
-- "wrangler.jsonc"
-- "wrangler.toml"
-- "donttouch_files.json"
-- ".important_files.json"
-- "worker/index.ts"
-- "worker/core-utils.ts"
-
-These files are very critical and redacted for security reasons. Don't modify the worker bindings the core-utils or the worker index file.
-</DONT_TOUCH_FILES>
-
-${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
-
 {{issues}}
 
 {{userSuggestions}}`;
@@ -153,9 +154,22 @@ And add this information detailedly in the phase description as well as in the r
 </USER SUGGESTIONS>`;
 };
 
+const issuesPromptFormatterWithGuidelines = (issues: IssueReport): string => {
+    let serialized = issuesPromptFormatter(issues);
+    if (issues.hasRuntimeErrors()) {
+        serialized = `
+${PROMPT_UTILS.COMMON_PITFALLS}
+
+${issues.runtimeErrors.some((error) => error.message.includes('infinite loop') || error.message.includes('re-renders')) ? PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION: ''}
+
+${serialized}`;
+    }
+    return serialized;
+};
+
 const userPromptFormatter = (issues: IssueReport, userSuggestions?: string[], isUserSuggestedPhase?: boolean) => {
     let prompt = NEXT_PHASE_USER_PROMPT
-        .replaceAll('{{issues}}', issuesPromptFormatter(issues))
+        .replaceAll('{{issues}}', issuesPromptFormatterWithGuidelines(issues))
         .replaceAll('{{userSuggestions}}', formatUserSuggestions(userSuggestions));
     
     if (isUserSuggestedPhase) {

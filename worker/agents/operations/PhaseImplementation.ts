@@ -71,6 +71,51 @@ export const SYSTEM_PROMPT = `<ROLE>
     •   If you see any other dependency being referenced, Immediately correct it.
 </CONTEXT>
 
+${PROMPT_UTILS.UI_GUIDELINES}
+
+We follow the following strategy at our team for rapidly delivering projects:
+${STRATEGIES.FRONTEND_FIRST_CODING}
+
+${PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION}
+
+⚠️⚠️⚠️ ABSOLUTE ZERO-TOLERANCE RULES - VIOLATION CRASHES THE APP ⚠️⚠️⚠️
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  🚨 ZUSTAND SELECTOR RULE - MOST COMMON BUG - READ THIS FIRST 🚨               ║
+║                                                                               ║
+║  ❌ FORBIDDEN - WILL CAUSE INFINITE LOOP:                                     ║
+║     const { a, b, c } = useStore(s => ({ a: s.a, b: s.b, c: s.c }))           ║
+║     const items = useStore(s => s.getItems())  // Returns new array           ║
+║                                                                               ║
+║  ✅ REQUIRED - TWO SAFE PATTERNS:                                             ║
+║     // Pattern 1: Separate selectors (foolproof, always safe)                ║
+║     const a = useStore(s => s.a);                                            ║
+║     const b = useStore(s => s.b);                                            ║
+║     const c = useStore(s => s.c);                                            ║
+║                                                                               ║
+║     // Pattern 2: useShallow wrapper (advanced, only if needed)              ║
+║     import { useShallow } from 'zustand/react/shallow';                      ║
+║     const { a, b, c } = useStore(useShallow(s => ({ a: s.a, b: s.b })));     ║
+║                                                                               ║
+║  ⚠️  CRITICAL: useStore(s => ({ ... })) WITHOUT useShallow = CRASH           ║
+║                                                                               ║
+║  WHY: Object-literal selectors create NEW objects every render causing        ║
+║       "Maximum update depth exceeded" errors that break the entire app.       ║
+║                                                                               ║
+║  IF YOU WRITE THE FORBIDDEN PATTERN, YOU MUST IMMEDIATELY REWRITE THE FILE    ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+⚠️⚠️⚠️ THIS RULE OVERRIDES ALL OTHER CONSIDERATIONS INCLUDING CODE AESTHETICS ⚠️⚠️⚠️
+
+**ZUSTAND PATTERN VALIDATION BEFORE SUBMITTING ANY FILE:**
+✅ Every useStore call must either:
+   1. Select a single primitive: useStore(s => s.value) OR
+   2. Use useShallow wrapper: useStore(useShallow(s => ({ ... })))
+
+❌ Search your code for "useStore(s => ({" pattern
+   - If found WITHOUT useShallow wrapper, REWRITE immediately
+   - When in doubt, use Pattern 1 (separate selectors)
+
 <CLIENT REQUEST>
 "{{query}}"
 </CLIENT REQUEST>
@@ -91,12 +136,10 @@ additional dependencies/frameworks **may** be provided:
 These are the only dependencies, components and plugins available for the project
 </DEPENDENCIES>
 
-${PROMPT_UTILS.UI_GUIDELINES}
-
-We follow the following strategy at our team for rapidly delivering projects:
-${STRATEGIES.FRONTEND_FIRST_CODING}
-
 {{template}}`;
+
+// Hopefully most of the system prompt should get cached
+// I know things are very redundant here, but I am tired of having it write code with re-render loops
 
 const USER_PROMPT = `**Phase Implementation**
 
@@ -109,6 +152,13 @@ These are the instructions and quality standards that must be followed to implem
         - Always use dependency arrays in useEffect
         - **Store actions are stable - exclude from dependencies**
         - For Zustand: use \`useShallow\` not \`shallow\` as second param (v5)
+        - **Zustand Selector Rule (ZERO TOLERANCE - CAUSES APP CRASHES):**
+          ✅ SAFE Option 1: const a = useStore(s => s.a); const b = useStore(s => s.b);
+          ✅ SAFE Option 2: import { useShallow } from 'zustand/react/shallow';
+                           const { a, b } = useStore(useShallow(s => ({ a: s.a, b: s.b })));
+          ❌ FORBIDDEN: const { a, b } = useStore(s => ({ a: s.a, b: s.b }))  // NO useShallow = CRASH
+          
+          **Default to Option 1 when unsure. Option 2 requires useShallow import.**
         - Avoid unconditional setState in useEffect
         - Stabilize object/array references with useMemo/useCallback
     
@@ -206,8 +256,18 @@ Every single file listed in <CURRENT_PHASE> needs to be implemented in this phas
 ⚠️  **ZUSTAND SELECTOR POLICY** — ZERO TOLERANCE
 - Do NOT return objects/arrays from \`useStore\` selectors
 - Do NOT destructure from object-literal selectors (e.g., \`const { a, b } = useStore((s) => ({ a: s.a, b: s.b }))\`)
+- Do NOT call methods that return arrays/objects: \`useStore(s => s.getItems())\` ❌
+- NEVER use: \`state.getXxx()\`, \`state.computeXxx()\`, \`state.findXxx()\` in selectors
 - Always select primitives individually via separate \`useStore\` calls
-- If you absolutely must read multiple values in one call, pass zustand's shallow comparator: \`useStore(selector, shallow)\`. Avoid object literals.
+- If you see "getSnapshot should be cached" warning/error → Your selector returns unstable references
+\`\`\`tsx
+// ❌ BAD: Method returns new array every render
+const items = useStore(s => s.getFilteredItems());
+// ✅ GOOD: Select primitives, compute with useMemo
+const allItems = useStore(s => s.items);
+const filter = useStore(s => s.filter);
+const items = useMemo(() => allItems.filter(i => i.status === filter), [allItems, filter]);
+\`\`\`
 
 ⚠️  **BACKWARD COMPATIBILITY** - PRESERVE EXISTING FUNCTIONALITY  
 - Do NOT break anything from previous phases
@@ -228,6 +288,24 @@ ${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
 {{userSuggestions}}
 
 </CURRENT_PHASE>`;
+
+// If things still don't work, add these ->
+// •   **MANDATORY: For every React file (.tsx/.jsx), add this verification checklist as a comment at the END of the file:**
+// \`\`\`tsx
+// /*
+//  * RENDER LOOP PREVENTION CHECKLIST:
+//  * noSetStateInRender?
+//  * allEffectsHaveDeps?
+//  * noStoreMethodSelectors?
+//  * stableDependencies?
+//  * primitiveSelectorsOnly?
+//  * noRecursiveState?
+//  * contextValuesMemoized?
+//  * noEffectMutatesState?
+//  * functionalUpdates?
+//  * stableCallbacks?
+//  */
+// \`\`\`
 
 const LAST_PHASE_PROMPT = `Finalization and Review phase. 
 Goal: Thoroughly review the entire codebase generated in previous phases. Identify and fix any remaining critical issues (runtime errors, logic flaws, rendering bugs) before deployment.
