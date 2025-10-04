@@ -707,13 +707,12 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'rate_limit_error': {
+                const errorData = message.error;
                 const rateLimitMessage = handleRateLimitError(
-                    message.error,
+                    errorData.details,
                     onDebugMessage
                 );
                 setMessages(prev => [...prev, rateLimitMessage]);
-
-                toast.error(`Error: ${message.error}`);
                 
                 break;
             }

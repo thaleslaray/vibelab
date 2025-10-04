@@ -6,7 +6,7 @@ export const TemplateSelectionSchema = z.object({
     reasoning: z.string().describe('Brief explanation for the selection or why no template was chosen.'),
     useCase: z.enum(['SaaS Product Website', 'Dashboard', 'Blog', 'Portfolio', 'E-Commerce', 'General', 'Other']).describe('The use case for which the template is selected, if applicable.').nullable(),
     complexity: z.enum(['simple', 'moderate', 'complex']).describe('The complexity of developing the project based on the the user query').nullable(),
-    styleSelection: z.enum(['Minimalist Design', 'Brutalism', 'Retro', 'Illustrative', 'Kid_Playful']).describe('Pick a style relevant to the user query').nullable(),
+    styleSelection: z.enum(['Minimalist Design', 'Brutalism', 'Retro', 'Illustrative', 'Kid_Playful', 'Custom']).describe('Pick a style relevant to the user query').nullable(),
     projectName: z.string().describe('The name of the project based on the user query'),
 });
 
@@ -137,11 +137,6 @@ export const ScreenshotAnalysisSchema = z.object({
     })
 });
 
-export const AgentActionSchema = z.object({
-    action: z.string().describe('Next action to be taken'),
-    data: z.record(z.unknown()).describe('Data associated with the action')
-});
-
 export type TemplateSelection = z.infer<typeof TemplateSelectionSchema>;
 export type Blueprint = z.infer<typeof BlueprintSchema>;
 export type FileConceptType = z.infer<typeof FileConceptSchema>;
@@ -155,11 +150,10 @@ export type CodeReviewOutputType = z.infer<typeof CodeReviewOutput>;
 export type SetupCommandsType = z.infer<typeof SetupCommandsSchema>;
 export type ClientReportedErrorType = z.infer<typeof ClientReportedErrorSchema>;
 export type ScreenshotAnalysisType = z.infer<typeof ScreenshotAnalysisSchema>;
-export type AgentActionType = z.infer<typeof AgentActionSchema>;
 
 // Conversational AI Schemas
 export const ConversationalResponseSchema = z.object({
-    enhancedUserRequest: z.string().describe('Enhanced and clarified user request to be added to pendingUserInputs'),
+    // enhancedUserRequest: z.string().describe('Enhanced and clarified user request to be added to pendingUserInputs'),
     userResponse: z.string().describe('Response message to send back to the user via WebSocket'),
 });
 
