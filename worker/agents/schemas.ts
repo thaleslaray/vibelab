@@ -6,7 +6,7 @@ export const TemplateSelectionSchema = z.object({
     reasoning: z.string().describe('Brief explanation for the selection or why no template was chosen.'),
     useCase: z.enum(['SaaS Product Website', 'Dashboard', 'Blog', 'Portfolio', 'E-Commerce', 'General', 'Other']).describe('The use case for which the template is selected, if applicable.').nullable(),
     complexity: z.enum(['simple', 'moderate', 'complex']).describe('The complexity of developing the project based on the the user query').nullable(),
-    styleSelection: z.enum(['Minimalist Design', 'Brutalism', 'Retro', 'Illustrative', 'Kid_Playful']).describe('Pick a style relevant to the user query').nullable(),
+    styleSelection: z.enum(['Minimalist Design', 'Brutalism', 'Retro', 'Illustrative', 'Kid_Playful', 'Custom']).describe('Pick a style relevant to the user query').nullable(),
     projectName: z.string().describe('The name of the project based on the user query'),
 });
 

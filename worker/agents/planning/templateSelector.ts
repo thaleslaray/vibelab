@@ -76,6 +76,7 @@ Reasoning: "Social template provides user interactions, content sharing, and com
 - **Retro**: Vintage, nostalgic design elements
 - **Illustrative**: Rich graphics and visual storytelling
 - **Kid_Playful**: Colorful, fun, child-friendly interfaces
+- **Custom**: Design that doesn't fit any of the above categories
 
 ## RULES:
 - ALWAYS select a template (never return null)
