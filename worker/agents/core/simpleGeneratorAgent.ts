@@ -117,6 +117,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     // Deployment queue management to prevent concurrent deployments
     private currentDeploymentPromise: Promise<PreviewType | null> | null = null;
     
+    private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+    
     public _logger: StructuredLogger | undefined;
 
     logger(): StructuredLogger {
@@ -1403,7 +1405,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             if (!resp || !resp.success) {
                 this.logger().error(`Failed to fetch runtime errors: ${resp?.error || 'Unknown error'}, Will initiate redeploy`);
                 // Initiate redeploy
-                this.deployToSandbox([], true);
+                this.deployToSandbox();
                 return [];
             }
             
@@ -1412,7 +1414,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             if (errors.filter(error => error.message.includes('Unterminated string in JSON at position')).length > 0) {
                 this.logger().error('Unterminated string in JSON at position, will initiate redeploy');
                 // Initiate redeploy
-                this.deployToSandbox([], true);
+                this.deployToSandbox();
                 return [];
             }
             
@@ -1675,7 +1677,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
-    private async createNewDeployment(): Promise<PreviewType | null> {
+    private async createNewPreview(): Promise<PreviewType | null> {
         // Create new deployment
         const templateName = this.state.templateDetails?.name || 'scratch';
         // Generate a unique suffix
@@ -1703,26 +1705,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         throw new Error(`Failed to create sandbox instance: ${createResponse?.error || 'Unknown error'}`);
     }
 
-    private async executeDeployment(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, retries: number = MAX_DEPLOYMENT_RETRIES): Promise<PreviewType | null> {
-        const { templateDetails, generatedFilesMap } = this.state;
+    private async ensurePreviewExists(redeploy: boolean = false) {
         let { sandboxInstanceId } = this.state;
         let previewURL: string | undefined;
         let tunnelURL: string | undefined;
-
-        if (!templateDetails) {
-            this.logger().error("Template details not available for deployment.");
-            this.broadcast(WebSocketMessageResponses.ERROR, { error: "Template details not configured." });
-            return null;
-        }
-
-        this.broadcast(WebSocketMessageResponses.DEPLOYMENT_STARTED, {
-            message: "Deploying code to sandbox service",
-            files: files.map(file => ({
-                filePath: file.filePath,
-            }))
-        });
-
-        this.logger().info("Deploying code to sandbox service");
 
         // Check if the instance is running
         if (sandboxInstanceId) {
@@ -1737,61 +1723,91 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }
         }
 
-        try {
-            if (!sandboxInstanceId || redeploy) {
-                const results = await this.createNewDeployment();
-                if (!results || !results.runId || !results.previewURL) {
-                    this.broadcast(WebSocketMessageResponses.DEPLOYMENT_FAILED, {
-                        message: "Failed to create new deployment",
-                    });
-                    throw new Error('Failed to create new deployment');
-                }
-                sandboxInstanceId = results.runId;
-                previewURL = results.previewURL;
-                tunnelURL = results.tunnelURL;
+        if (!sandboxInstanceId || redeploy) {
+            const results = await this.createNewPreview();
+            if (!results || !results.runId || !results.previewURL) {
+                throw new Error('Failed to create new deployment');
+            }
+            sandboxInstanceId = results.runId;
+            previewURL = results.previewURL;
+            tunnelURL = results.tunnelURL;
 
-                this.setState({
-                    ...this.state,
-                    sandboxInstanceId,
+            this.setState({
+                ...this.state,
+                sandboxInstanceId,
+            });
+
+            if (this.state.commandsHistory && this.state.commandsHistory.length > 0) {
+                // Run all commands in background
+                let cmds = this.state.commandsHistory;
+                if (cmds.length > 10) {
+                    cmds =  Array.from(new Set(this.state.commandsHistory));
+                    // I am aware this will messup the ordering of commands and may cause issues but those would be in very rare cases
+                    // because usually LLMs will only generate install commands or rm commands. 
+                    // This is to handle the bug still present in a lot of apps because of an exponential growth of commands
+                }
+                this.getSandboxServiceClient().executeCommands(sandboxInstanceId, cmds);
+                this.broadcast(WebSocketMessageResponses.COMMAND_EXECUTING, {
+                    message: "Executing setup commands",
+                    commands: cmds,
                 });
-
-                if (this.state.commandsHistory && this.state.commandsHistory.length > 0) {
-                    // Run all commands in background
-                    let cmds = this.state.commandsHistory;
-                    if (cmds.length > 10) {
-                        cmds =  Array.from(new Set(this.state.commandsHistory));
-                        // I am aware this will messup the ordering of commands and may cause issues but those would be in very rare cases
-                        // because usually LLMs will only generate install commands or rm commands. 
-                        // This is to handle the bug still present in a lot of apps because of an exponential growth of commands
-                    }
-                    this.getSandboxServiceClient().executeCommands(sandboxInstanceId, cmds);
-                    this.broadcast(WebSocketMessageResponses.COMMAND_EXECUTING, {
-                        message: "Executing setup commands",
-                        commands: cmds,
-                    });
-                }
-
-                // Launch a set interval to check the health of the deployment. If it fails, redeploy
-                const checkHealthInterval = setInterval(async () => {
-                    const status = await this.getSandboxServiceClient().getInstanceStatus(sandboxInstanceId!);
-                    if (!status || !status.success) {
-                        this.logger().error(`DEPLOYMENT CHECK FAILED: Failed to get status for instance ${sandboxInstanceId}, redeploying...`);
-                        clearInterval(checkHealthInterval);
-                        await this.deployToSandbox([], true);
-                    }
-                }, 2000);
-
-                // Launch a static analysis on the codebase in the background to build cache
-                this.runStaticAnalysisCode();
             }
 
+            // Clear any existing health check interval before creating a new one
+            if (this.healthCheckInterval !== null) {
+                clearInterval(this.healthCheckInterval);
+                this.healthCheckInterval = null;
+            }
+
+            // Launch a set interval to check the health of the deployment. If it fails, redeploy
+            this.healthCheckInterval = setInterval(async () => {
+                const status = await this.getSandboxServiceClient().getInstanceStatus(sandboxInstanceId!);
+                if (!status || !status.success) {
+                    this.logger().error(`DEPLOYMENT CHECK FAILED: Failed to get status for instance ${sandboxInstanceId}, redeploying...`);
+                    // Clear the interval to prevent it from running again
+                    if (this.healthCheckInterval !== null) {
+                        clearInterval(this.healthCheckInterval);
+                        this.healthCheckInterval = null;
+                    }
+                    await this.deployToSandbox([], true);
+                }
+            }, 2000);
+
+            // Launch a static analysis on the codebase in the background to build cache
+            // this.runStaticAnalysisCode();
+        }
+
+        return {
+            sandboxInstanceId,
+            previewURL,
+            tunnelURL,
+        };
+    }
+
+    private async executeDeployment(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, retries: number = MAX_DEPLOYMENT_RETRIES): Promise<PreviewType | null> {
+        this.broadcast(WebSocketMessageResponses.DEPLOYMENT_STARTED, {
+            message: "Deploying code to sandbox service",
+            files: files.map(file => ({
+                filePath: file.filePath,
+            }))
+        });
+
+        this.logger().info("Deploying code to sandbox service");
+
+        try {
+            const {
+                sandboxInstanceId,
+                previewURL,
+                tunnelURL,
+            } = await this.ensurePreviewExists(redeploy);
+            
             // Deploy files
             const filesToWrite = files.length > 0 
                 ? files.map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents
                 }))
-                : Object.values(generatedFilesMap).map(file => ({
+                : Object.values(this.state.generatedFilesMap).map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents
                 }));
