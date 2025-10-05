@@ -656,9 +656,10 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
 
         - Import like this:
         \`import { ReactFlow } from '@xyflow/react';\`
-    • **@react-three/fiber ^9.0.0 and @react-three/drei ^10.0.0 require react ^19 and will not work with react ^18.**
+    • **@react-three/fiber ^9.0.0 and @react-three/drei ^10.0.0 require react ^19 and will not work with react ^18. And in general avoid using these**
         - Please upgrade react to 19 to use these packages.
         - With react 18, it will throw runtime error: Cannot read properties of undefined (reading 'S')
+        react@18.3.1 three@^0.160.0 comlink@^4.4.1 idb-keyval@^6.2.1 simplex-noise@^4.0.1 @msgpack/msgpack@^2.8.0 - These work well together
 
     • **No support for websockets and dynamic imports may not work, so please avoid using them.**
     - **Zustand v5 (Always Installed in Templates):**

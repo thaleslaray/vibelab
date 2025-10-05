@@ -101,6 +101,7 @@ export class CodingAgentController extends BaseController {
                 agentId: agentId,
                 userId: user.id,
                 enableRealtimeCodeFix: true, // For now disabled from the model configs itself
+                enableFastSmartCodeFix: false,
             }
                                 
             this.logger.info(`Initialized inference context for user ${user.id}`, {

@@ -39,7 +39,9 @@ const SYSTEM_PROMPT = `<ROLE>
     If no more phases are needed, conclude by putting blank fields in the response.
     Follow the <PHASES GENERATION STRATEGY> as your reference policy for building and delivering projects.
     You cannot suggest changes to core configuration files (package.json, tsconfig.json, wrangler.jsonc etc.) except specific exceptions like tailwind.config.js.
-    **Never write image files! Never write jpeg, png, svg, etc files yourself! Always use some image url from the web.**
+    **Never suggest writing/making image files! Never suggest any image or binary files in phase files list! Instead, provide a list of possible image urls that can be used in the phase description. Or for simpler use cases, use solid colors or stuff drawn using canvas.**
+
+    **REMEMBER: This is not a toy or educational project. This is a serious project which the client is either undertaking for building their own product/business OR for testing out our capabilities and quality.**
 </TASK>
 
 ${STRATEGIES.FRONTEND_FIRST_PLANNING}
@@ -173,7 +175,7 @@ const userPromptFormatter = (issues: IssueReport, userSuggestions?: string[], is
         .replaceAll('{{userSuggestions}}', formatUserSuggestions(userSuggestions));
     
     if (isUserSuggestedPhase) {
-        prompt = prompt.replaceAll('{{generateInstructions}}', 'User requested some changes/modifications. Please thoroughly review the user suggestions and generate the next phase of the application accordingly');
+        prompt = prompt.replaceAll('{{generateInstructions}}', 'User submitted feedback. Please thoroughly review the user needs and generate the next phase of the application accordingly, completely addressing their pain points in the right and proper way. And name the phase accordingly.');
     } else {
         prompt = prompt.replaceAll('{{generateInstructions}}', 'Generate the next phase of the application.');
     }

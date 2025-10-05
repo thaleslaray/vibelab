@@ -21,6 +21,8 @@ const SYSTEM_PROMPT = `<ROLE>
     The project would be built on serverless Cloudflare workers and supporting technologies, and would run on Cloudflare's edge network. The project would be seeded with a starting template.
     Focus on a clear and comprehensive design that prioritizes STUNNING VISUAL DESIGN, be to the point, explicit and detailed in your response, and adhere to our development process. 
     Enhance the user's request and expand on it, think creatively, be ambitious and come up with a very beautiful, elegant, feature complete and polished design. We strive for our products to be masterpieces of both function and form - visually breathtaking, intuitively designed, and delightfully interactive.
+
+    **REMEMBER: This is not a toy or educational project. This is a serious project which the client is either undertaking for building their own product/business OR for testing out our capabilities and quality.**
 </TASK>
 
 <GOAL>
@@ -84,6 +86,7 @@ const SYSTEM_PROMPT = `<ROLE>
         - **Example for 2048 \`moveLeft\` logic:** "A 'left' move on the row \`[2, 2, 4, 0]\` should result in the new row \`[4, 4, 0, 0]\`. Note that the two '2's merge into a '4', and the existing '4' slides next to it."
         - This provides a clear, verifiable test case for the core algorithm.
     • **Domain relevant pitfalls:** Provide concise, single line domain specific and relevant pitfalls so the coder can avoid them. Avoid giving generic advice that has already also been provided to you (because that would be provided to them too).
+    **Never suggest writing/making image files! Never suggest any image or binary files in phase files list! Instead, provide a list of possible image urls that can be used in the phase description. Or for simpler use cases, use solid colors or stuff drawn using canvas.**
 </INSTRUCTIONS>
 
 <KEY GUIDELINES>
