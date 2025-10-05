@@ -79,14 +79,13 @@ interface Operations {
 }
 
 /**
- * SimpleCodeGeneratorAgent - Deterministically orhestrated AI-powered code generation
+ * SimpleCodeGeneratorAgent - Deterministically orhestrated agent
  * 
  * Manages the lifecycle of code generation including:
- * - Blueprint-based phase generation
- * - Real-time file streaming with WebSocket updates
+ * - Blueprint, phase generation, phase implementation, review cycles orchestrations
+ * - File streaming with WebSocket updates
  * - Code validation and error correction
  * - Deployment to sandbox service
- * - Review cycles with automated fixes
  */
 export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     protected projectSetupAssistant: ProjectSetupAssistant | undefined;
@@ -136,81 +135,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     getAgentId() {
         return this.state.inferenceContext.agentId
-    }
-
-    // ===============================
-    // Screenshot storage helpers
-    // ===============================
-    private base64ToUint8Array(base64: string): Uint8Array {
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
-    }
-
-    private async uploadScreenshotToCloudflareImages(base64: string, filename: string): Promise<string> {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${this.env.CLOUDFLARE_ACCOUNT_ID}/images/v1`;
-        const bytes = this.base64ToUint8Array(base64);
-        const blob = new Blob([bytes], { type: 'image/png' });
-        const form = new FormData();
-        form.append('file', blob, filename);
-
-        // Type guard for Images binding
-        type ImagesBinding = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
-        const maybeImages = (this.env as unknown as { [key: string]: unknown })['IMAGES'];
-        const imagesBinding: ImagesBinding | null = (
-            typeof maybeImages === 'object' && maybeImages !== null &&
-            'fetch' in (maybeImages as Record<string, unknown>) && 
-            typeof (maybeImages as { fetch?: unknown }).fetch === 'function'
-        ) ? (maybeImages as ImagesBinding) : null;
-
-        let resp: Response;
-        if (imagesBinding) {
-            // Use Images service binding when available (no explicit token needed)
-            resp = await imagesBinding.fetch(url, { method: 'POST', body: form });
-        } else if (this.env.CLOUDFLARE_API_TOKEN) {
-            // Fallback to direct API with token
-            resp = await fetch(url, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${this.env.CLOUDFLARE_API_TOKEN}` },
-                body: form,
-            });
-        } else {
-            throw new Error('Cloudflare Images not available: missing IMAGES binding and CLOUDFLARE_API_TOKEN');
-        }
-
-        const json = await resp.json() as {
-            success: boolean;
-            result?: { id: string; variants?: string[] };
-            errors?: Array<{ message?: string }>;
-        };
-
-        if (!resp.ok || !json.success || !json.result) {
-            const errMsg = json.errors?.map(e => e.message).join('; ') || `status ${resp.status}`;
-            throw new Error(`Cloudflare Images upload failed: ${errMsg}`);
-        }
-
-        const variants = json.result.variants || [];
-        if (variants.length > 0) {
-            // Prefer first variant URL
-            return variants[0];
-        }
-        throw new Error('Cloudflare Images upload succeeded without variants');
-    }
-
-    private async uploadScreenshotToR2(base64: string, key: string): Promise<string> {
-        const bytes = this.base64ToUint8Array(base64);
-        await this.env.TEMPLATES_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } });
-
-        // Build a public URL served via Worker route
-        const fileName = key.split('/').pop() as string;
-        const protocol = getProtocolForHost(this.state.hostname);
-        const base = `${protocol}://${this.env.CUSTOM_DOMAIN}`;
-        const agentId = this.state.inferenceContext.agentId;
-        const url = `${base}/api/screenshots/${encodeURIComponent(agentId)}/${encodeURIComponent(fileName)}`;
-        return url;
     }
 
     initialState: CodeGenState = {
@@ -1010,7 +934,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         if (finalFiles.length > 0) {
             await this.deployToSandbox(finalFiles, false, phase.name);
             await this.applyDeterministicCodeFixes();
-            // await this.applyFastSmartCodeFixes();
+            if (this.state.inferenceContext.enableFastSmartCodeFix) {
+                await this.applyFastSmartCodeFixes();
+            }
         }
 
         // Validation complete
@@ -1500,44 +1426,38 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
-    // private async applyFastSmartCodeFixes() : Promise<void> {
-    //     try {
-    //         const startTime = Date.now();
-    //         this.logger().info("Applying fast smart code fixes");
-    //         // Get static analysis and do deterministic fixes
-    //         const staticAnalysis = await this.runStaticAnalysisCode();
-    //         if (staticAnalysis.typecheck.issues.length + staticAnalysis.lint.issues.length == 0) {
-    //             this.logger().info("No issues found, skipping fast smart code fixes");
-    //             return;
-    //         }
-    //         const issues = staticAnalysis.typecheck.issues.concat(staticAnalysis.lint.issues);
-    //         const allFiles = this.fileManager.getAllFiles();
-    //         const context = GenerationContext.from(this.state, this.logger());
+    private async applyFastSmartCodeFixes() : Promise<void> {
+        try {
+            const startTime = Date.now();
+            this.logger().info("Applying fast smart code fixes");
+            // Get static analysis and do deterministic fixes
+            const staticAnalysis = await this.runStaticAnalysisCode();
+            if (staticAnalysis.typecheck.issues.length + staticAnalysis.lint.issues.length == 0) {
+                this.logger().info("No issues found, skipping fast smart code fixes");
+                return;
+            }
+            const issues = staticAnalysis.typecheck.issues.concat(staticAnalysis.lint.issues);
+            const allFiles = this.fileManager.getAllFiles();
 
-    //         const fastCodeFixer = await this.operations.fastCodeFixer.execute({
-    //             query: this.state.query,
-    //             issues,
-    //             allFiles,
-    //         }, {
-    //             env: this.env,
-    //             agentId: this.getAgentId(),
-    //             context,
-    //             logger: this.logger()
-    //         });
+            const fastCodeFixer = await this.operations.fastCodeFixer.execute({
+                query: this.state.query,
+                issues,
+                allFiles,
+            }, this.getOperationOptions());
 
-    //         if (fastCodeFixer.length > 0) {
-    //             this.fileManager.saveGeneratedFiles(fastCodeFixer);
-    //             await this.deployToSandbox(fastCodeFixer);
-    //             this.logger().info("Fast smart code fixes applied successfully");
-    //         }
-    //         this.logger().info(`Fast smart code fixes applied in ${Date.now() - startTime}ms`);            
-    //     } catch (error) {
-    //         this.logger().error("Error applying fast smart code fixes:", error);
-    //         const errorMessage = error instanceof Error ? error.message : String(error);
-    //         this.broadcast(WebSocketMessageResponses.ERROR, { error: `Failed to apply fast smart code fixes: ${errorMessage}` });
-    //         return;
-    //     }
-    // }
+            if (fastCodeFixer.length > 0) {
+                this.fileManager.saveGeneratedFiles(fastCodeFixer);
+                await this.deployToSandbox(fastCodeFixer);
+                this.logger().info("Fast smart code fixes applied successfully");
+            }
+            this.logger().info(`Fast smart code fixes applied in ${Date.now() - startTime}ms`);            
+        } catch (error) {
+            this.logger().error("Error applying fast smart code fixes:", error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.broadcast(WebSocketMessageResponses.ERROR, { error: `Failed to apply fast smart code fixes: ${errorMessage}` });
+            return;
+        }
+    }
 
     /**
      * Apply deterministic code fixes for common TypeScript errors
@@ -1786,7 +1706,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 }
                 
                 const status = await this.getSandboxServiceClient().getInstanceStatus(sandboxInstanceId!);
-                if (!status || !status.success) {
+                if (!status || !status.success || !status.isHealthy) {
                     this.logger().error(`DEPLOYMENT CHECK FAILED: Failed to get status for instance ${sandboxInstanceId}, redeploying...`);
                     // Clear the interval to prevent it from running again
                     if (this.healthCheckInterval !== null) {
@@ -2145,21 +2065,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
     }
 
-    // /**
-    //  * Get project dependencies from state and package.json
-    //  */
-    // private getDependencies(): Record<string, string> {
-    //     const state = this.state;
-    //     const deps = state.templateDetails?.deps || {};
-    //     // Add additional dependencies from the last package.json
-    //     if (state.lastPackageJson) {
-    //         const parsedPackageJson = JSON.parse(state.lastPackageJson);
-    //         Object.assign(deps, parsedPackageJson.dependencies as Record<string, string>);
-    //         this.logger().info(`Adding dependencies from last package.json: ${Object.keys(parsedPackageJson.dependencies).join(', ')}`);
-    //     }
-    //     return deps;
-    // }
-
     /**
      * Execute commands with retry logic
      * Chunks commands and retries failed ones with AI assistance
@@ -2499,6 +2404,82 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
+    // ===============================
+    // Screenshot storage helpers
+    // ===============================
+    
+    private base64ToUint8Array(base64: string): Uint8Array {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    private async uploadScreenshotToCloudflareImages(base64: string, filename: string): Promise<string> {
+        const url = `https://api.cloudflare.com/client/v4/accounts/${this.env.CLOUDFLARE_ACCOUNT_ID}/images/v1`;
+        const bytes = this.base64ToUint8Array(base64);
+        const blob = new Blob([bytes], { type: 'image/png' });
+        const form = new FormData();
+        form.append('file', blob, filename);
+
+        // Type guard for Images binding
+        type ImagesBinding = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+        const maybeImages = (this.env as unknown as { [key: string]: unknown })['IMAGES'];
+        const imagesBinding: ImagesBinding | null = (
+            typeof maybeImages === 'object' && maybeImages !== null &&
+            'fetch' in (maybeImages as Record<string, unknown>) && 
+            typeof (maybeImages as { fetch?: unknown }).fetch === 'function'
+        ) ? (maybeImages as ImagesBinding) : null;
+
+        let resp: Response;
+        if (imagesBinding) {
+            // Use Images service binding when available (no explicit token needed)
+            resp = await imagesBinding.fetch(url, { method: 'POST', body: form });
+        } else if (this.env.CLOUDFLARE_API_TOKEN) {
+            // Fallback to direct API with token
+            resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${this.env.CLOUDFLARE_API_TOKEN}` },
+                body: form,
+            });
+        } else {
+            throw new Error('Cloudflare Images not available: missing IMAGES binding and CLOUDFLARE_API_TOKEN');
+        }
+
+        const json = await resp.json() as {
+            success: boolean;
+            result?: { id: string; variants?: string[] };
+            errors?: Array<{ message?: string }>;
+        };
+
+        if (!resp.ok || !json.success || !json.result) {
+            const errMsg = json.errors?.map(e => e.message).join('; ') || `status ${resp.status}`;
+            throw new Error(`Cloudflare Images upload failed: ${errMsg}`);
+        }
+
+        const variants = json.result.variants || [];
+        if (variants.length > 0) {
+            // Prefer first variant URL
+            return variants[0];
+        }
+        throw new Error('Cloudflare Images upload succeeded without variants');
+    }
+
+    private async uploadScreenshotToR2(base64: string, key: string): Promise<string> {
+        const bytes = this.base64ToUint8Array(base64);
+        await this.env.TEMPLATES_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } });
+
+        // Build a public URL served via Worker route
+        const fileName = key.split('/').pop() as string;
+        const protocol = getProtocolForHost(this.state.hostname);
+        const base = `${protocol}://${this.env.CUSTOM_DOMAIN}`;
+        const agentId = this.state.inferenceContext.agentId;
+        const url = `${base}/api/screenshots/${encodeURIComponent(agentId)}/${encodeURIComponent(fileName)}`;
+        return url;
+    }
+
     /**
      * Capture screenshot of the given URL using Cloudflare Browser Rendering REST API
      */
@@ -2668,144 +2649,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }
             
             throw new Error(`Screenshot capture failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-    }
-
-    /**
-     * Execute a terminal command received from the frontend
-     * Uses the same infrastructure as the existing executeCommands method
-     */
-    async executeTerminalCommand(command: string, connection?: Connection): Promise<void> {
-        try {
-            this.logger().info('Executing terminal command', { command });
-            
-            // Send server log
-            const serverLogMessage = {
-                message: `Executing command: ${command}`,
-                level: 'info' as const,
-                timestamp: Date.now(),
-                source: 'terminal'
-            };
-            
-            if (connection) {
-                this.sendToConnection(connection, WebSocketMessageResponses.SERVER_LOG, serverLogMessage);
-            } else {
-                this.broadcast(WebSocketMessageResponses.SERVER_LOG, serverLogMessage);
-            }
-
-            const sanitizedCommand = command.trim();
-            if (!sanitizedCommand) {
-                throw new Error('Empty command');
-            }
-
-            const state = this.state;
-            if (!state.sandboxInstanceId) {
-                throw new Error('No sandbox instance available for executing commands');
-            }
-
-            // Use the existing sandbox service to execute the command
-            this.broadcast(WebSocketMessageResponses.COMMAND_EXECUTING, {
-                message: "Executing terminal command",
-                commands: [sanitizedCommand]
-            });
-
-            const resp = await this.getSandboxServiceClient().executeCommands(
-                state.sandboxInstanceId,
-                [sanitizedCommand]
-            );
-
-            if (!resp || !resp.results) {
-                throw new Error('Failed to execute command');
-            }
-
-            // Send the command output back to terminal
-            for (const result of resp.results) {
-                if (result.output) {
-                    const outputMessage = {
-                        output: result.output,
-                        outputType: result.success ? 'stdout' as const : 'stderr' as const,
-                        timestamp: Date.now()
-                    };
-                    
-                    if (connection) {
-                        this.sendToConnection(connection, WebSocketMessageResponses.TERMINAL_OUTPUT, outputMessage);
-                    } else {
-                        this.broadcast(WebSocketMessageResponses.TERMINAL_OUTPUT, outputMessage);
-                    }
-                }
-                
-                if (result.error) {
-                    const errorMessage = {
-                        output: result.error,
-                        outputType: 'stderr' as const,
-                        timestamp: Date.now()
-                    };
-                    
-                    if (connection) {
-                        this.sendToConnection(connection, WebSocketMessageResponses.TERMINAL_OUTPUT, errorMessage);
-                    } else {
-                        this.broadcast(WebSocketMessageResponses.TERMINAL_OUTPUT, errorMessage);
-                    }
-                }
-
-                // Show exit code if non-zero
-                if (result.exitCode !== 0) {
-                    const exitCodeMessage = {
-                        output: `Command exited with code ${result.exitCode}`,
-                        outputType: 'stderr' as const,
-                        timestamp: Date.now()
-                    };
-                    
-                    if (connection) {
-                        this.sendToConnection(connection, WebSocketMessageResponses.TERMINAL_OUTPUT, exitCodeMessage);
-                    } else {
-                        this.broadcast(WebSocketMessageResponses.TERMINAL_OUTPUT, exitCodeMessage);
-                    }
-                }
-            }
-            
-        } catch (error) {
-            this.logger().error('Error executing terminal command:', error);
-            
-            const errorMessage = {
-                output: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                outputType: 'stderr' as const,
-                timestamp: Date.now()
-            };
-            
-            if (connection) {
-                this.sendToConnection(connection, WebSocketMessageResponses.TERMINAL_OUTPUT, errorMessage);
-            } else {
-                this.broadcast(WebSocketMessageResponses.TERMINAL_OUTPUT, errorMessage);
-            }
-        }
-    }
-
-    /**
-     * Send a server log message to terminals
-     */
-    broadcastServerLog(message: string, level: 'info' | 'warn' | 'error' | 'debug' = 'info', source?: string): void {
-        this.broadcast(WebSocketMessageResponses.SERVER_LOG, {
-            message,
-            level,
-            timestamp: Date.now(),
-            source
-        });
-    }
-
-    /**
-     * Send message to a specific connection
-     */
-    private sendToConnection(
-        connection: Connection, 
-        type: string, 
-        data: any
-    ): void {
-        try {
-            const message = { type, ...data };
-            connection.send(JSON.stringify(message));
-        } catch (error) {
-            this.logger().error('Error sending message to connection:', error);
         }
     }
 }
