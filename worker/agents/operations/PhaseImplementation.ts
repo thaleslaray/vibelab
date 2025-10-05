@@ -71,6 +71,51 @@ export const SYSTEM_PROMPT = `<ROLE>
     •   If you see any other dependency being referenced, Immediately correct it.
 </CONTEXT>
 
+${PROMPT_UTILS.UI_GUIDELINES}
+
+We follow the following strategy at our team for rapidly delivering projects:
+${STRATEGIES.FRONTEND_FIRST_CODING}
+
+${PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION}
+
+⚠️⚠️⚠️ ABSOLUTE ZERO-TOLERANCE RULES - VIOLATION CRASHES THE APP ⚠️⚠️⚠️
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  🚨 ZUSTAND SELECTOR RULE - MOST COMMON BUG - READ THIS FIRST 🚨               ║
+║                                                                               ║
+║  ❌ FORBIDDEN - WILL CAUSE INFINITE LOOP:                                     ║
+║     const { a, b, c } = useStore(s => ({ a: s.a, b: s.b, c: s.c }))           ║
+║     const items = useStore(s => s.getItems())  // Returns new array           ║
+║                                                                               ║
+║  ✅ REQUIRED - TWO SAFE PATTERNS:                                             ║
+║     // Pattern 1: Separate selectors (foolproof, always safe)                ║
+║     const a = useStore(s => s.a);                                            ║
+║     const b = useStore(s => s.b);                                            ║
+║     const c = useStore(s => s.c);                                            ║
+║                                                                               ║
+║     // Pattern 2: useShallow wrapper (advanced, only if needed)              ║
+║     import { useShallow } from 'zustand/react/shallow';                      ║
+║     const { a, b, c } = useStore(useShallow(s => ({ a: s.a, b: s.b })));     ║
+║                                                                               ║
+║  ⚠️  CRITICAL: useStore(s => ({ ... })) WITHOUT useShallow = CRASH           ║
+║                                                                               ║
+║  WHY: Object-literal selectors create NEW objects every render causing        ║
+║       "Maximum update depth exceeded" errors that break the entire app.       ║
+║                                                                               ║
+║  IF YOU WRITE THE FORBIDDEN PATTERN, YOU MUST IMMEDIATELY REWRITE THE FILE    ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+⚠️⚠️⚠️ THIS RULE OVERRIDES ALL OTHER CONSIDERATIONS INCLUDING CODE AESTHETICS ⚠️⚠️⚠️
+
+**ZUSTAND PATTERN VALIDATION BEFORE SUBMITTING ANY FILE:**
+✅ Every useStore call must either:
+   1. Select a single primitive: useStore(s => s.value) OR
+   2. Use useShallow wrapper: useStore(useShallow(s => ({ ... })))
+
+❌ Search your code for "useStore(s => ({" pattern
+   - If found WITHOUT useShallow wrapper, REWRITE immediately
+   - When in doubt, use Pattern 1 (separate selectors)
+
 <CLIENT REQUEST>
 "{{query}}"
 </CLIENT REQUEST>
@@ -91,12 +136,10 @@ additional dependencies/frameworks **may** be provided:
 These are the only dependencies, components and plugins available for the project
 </DEPENDENCIES>
 
-${PROMPT_UTILS.UI_GUIDELINES}
-
-We follow the following strategy at our team for rapidly delivering projects:
-${STRATEGIES.FRONTEND_FIRST_CODING}
-
 {{template}}`;
+
+// Hopefully most of the system prompt should get cached
+// I know things are very redundant here, but I am tired of having it write code with re-render loops
 
 const USER_PROMPT = `**Phase Implementation**
 
@@ -109,6 +152,13 @@ These are the instructions and quality standards that must be followed to implem
         - Always use dependency arrays in useEffect
         - **Store actions are stable - exclude from dependencies**
         - For Zustand: use \`useShallow\` not \`shallow\` as second param (v5)
+        - **Zustand Selector Rule (ZERO TOLERANCE - CAUSES APP CRASHES):**
+          ✅ SAFE Option 1: const a = useStore(s => s.a); const b = useStore(s => s.b);
+          ✅ SAFE Option 2: import { useShallow } from 'zustand/react/shallow';
+                           const { a, b } = useStore(useShallow(s => ({ a: s.a, b: s.b })));
+          ❌ FORBIDDEN: const { a, b } = useStore(s => ({ a: s.a, b: s.b }))  // NO useShallow = CRASH
+          
+          **Default to Option 1 when unsure. Option 2 requires useShallow import.**
         - Avoid unconditional setState in useEffect
         - Stabilize object/array references with useMemo/useCallback
     
@@ -127,7 +177,79 @@ These are the instructions and quality standards that must be followed to implem
        - Validate array length before element access
        - Use try-catch for async operations
        - Handle undefined values gracefully
+
+    5. Layout Architecture Requirements (MANDATORY, copy these patterns)
+    - Full-height page layout:
+    <div className="h-screen flex flex-col">
+        <header className="flex-shrink-0">...</header>
+        <main className="flex-1 overflow-auto">...</main>
+    </div>
+
+    - Sidebar + main layout (Finder/IDE/Dashboard):
+    <div className="h-full flex">
+        <aside className="w-64 min-w-[180px] flex-shrink-0">...</aside>
+        <main className="flex-1 overflow-auto">...</main>
+    </div>
+    Notes:
+    - Always give the sidebar a min-width via CSS (min-w-[180px]) to prevent text cutoff.
+    - Prefer CSS min-w on content instead of relying on % minimums.
+
+    - Resizable panels (horizontal):
+    <ResizablePanelGroup direction="horizontal" className="h-full">
+        <ResizablePanel defaultSize={25}>
+        <aside className="h-full min-w-[180px]">...</aside>
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={75}>
+        <main className="h-full overflow-auto">...</main>
+        </ResizablePanel>
+    </ResizablePanelGroup>
+    Notes:
+    - Parent must have explicit height (h-full / h-screen).
+    - Put a ResizableHandle between panels.
+    - Use CSS min-w-[...] on the sidebar content to guarantee readable width.
+
+    - Data-driven rendering (always guard):
+    if (isLoading) return <LoadingSkeleton />;
+    if (error) return <ErrorState message={error} />;
+    if (!items?.length) return <EmptyState />;
+    return <List items={items} />;
+
+    6. Framer Motion Drag Handle Policy (correct API usage)
+    - Framer Motion does NOT support a dragHandle prop.
+    - If you need a specific header as the drag handle:
+    - Use useDragControls(), set dragListener={false} on the draggable motion.div
+    - In the header onPointerDown, call controls.start(e)
+    - Example:
+        const controls = useDragControls();
+        <motion.div drag dragControls={controls} dragListener={false}>...</motion.div>
+        <header onPointerDown={(e) => controls.start(e)}>...</header>
+
+    7. Type Safety: Prefer proper types over casting (avoid misuse of \`as\`)
+    - ✅ Correct: Fix object shape to match type
+      const node: VFSFolder = { id, type: 'folder', name, parentId, children: [] };
     
+    - ⚠️ Use sparingly: \`as\` for DOM elements or explicit type narrowing
+      const input = event.target as HTMLInputElement;
+    
+    - ❌ Wrong: Forcing incompatible types (missing required fields)
+      const node = { id, type: 'folder', name } as VFSFolder; // Missing children!
+
+    8. Null Safety & Async Error Handling (CRITICAL - prevents most runtime crashes)
+    - Always use optional chaining: user?.profile?.name not user.profile.name
+    - Always use nullish coalescing for defaults: items ?? [] not items || []
+    - ALWAYS wrap async operations in try-catch with error state:
+      try {
+        const data = await fetch('/api/data');
+        setData(data);
+        setError(null);
+      } catch (err) {
+        console.error('API failed:', err);
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      }
+    - Add debug logging before potential crashes:
+      if (!data) { console.warn('Data missing'); return <Loading />; }
+
     **CODE QUALITY STANDARDS:**
     •   **Robustness:** Write fault-tolerant code with proper error handling and fallbacks
     •   **State Management:** Ensure UI reflects application state correctly, no infinite re-renders
@@ -206,8 +328,18 @@ Every single file listed in <CURRENT_PHASE> needs to be implemented in this phas
 ⚠️  **ZUSTAND SELECTOR POLICY** — ZERO TOLERANCE
 - Do NOT return objects/arrays from \`useStore\` selectors
 - Do NOT destructure from object-literal selectors (e.g., \`const { a, b } = useStore((s) => ({ a: s.a, b: s.b }))\`)
+- Do NOT call methods that return arrays/objects: \`useStore(s => s.getItems())\` ❌
+- NEVER use: \`state.getXxx()\`, \`state.computeXxx()\`, \`state.findXxx()\` in selectors
 - Always select primitives individually via separate \`useStore\` calls
-- If you absolutely must read multiple values in one call, pass zustand's shallow comparator: \`useStore(selector, shallow)\`. Avoid object literals.
+- If you see "getSnapshot should be cached" warning/error → Your selector returns unstable references
+\`\`\`tsx
+// ❌ BAD: Method returns new array every render
+const items = useStore(s => s.getFilteredItems());
+// ✅ GOOD: Select primitives, compute with useMemo
+const allItems = useStore(s => s.items);
+const filter = useStore(s => s.filter);
+const items = useMemo(() => allItems.filter(i => i.status === filter), [allItems, filter]);
+\`\`\`
 
 ⚠️  **BACKWARD COMPATIBILITY** - PRESERVE EXISTING FUNCTIONALITY  
 - Do NOT break anything from previous phases
@@ -228,6 +360,24 @@ ${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
 {{userSuggestions}}
 
 </CURRENT_PHASE>`;
+
+// If things still don't work, add these ->
+// •   **MANDATORY: For every React file (.tsx/.jsx), add this verification checklist as a comment at the END of the file:**
+// \`\`\`tsx
+// /*
+//  * RENDER LOOP PREVENTION CHECKLIST:
+//  * noSetStateInRender?
+//  * allEffectsHaveDeps?
+//  * noStoreMethodSelectors?
+//  * stableDependencies?
+//  * primitiveSelectorsOnly?
+//  * noRecursiveState?
+//  * contextValuesMemoized?
+//  * noEffectMutatesState?
+//  * functionalUpdates?
+//  * stableCallbacks?
+//  */
+// \`\`\`
 
 const LAST_PHASE_PROMPT = `Finalization and Review phase. 
 Goal: Thoroughly review the entire codebase generated in previous phases. Identify and fix any remaining critical issues (runtime errors, logic flaws, rendering bugs) before deployment.

@@ -390,6 +390,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         })
         // Reset sandbox service client
         this.sandboxServiceClient = undefined;
+        
+        // Clear health check interval since we're abandoning the old instance
+        if (this.healthCheckInterval !== null) {
+            clearInterval(this.healthCheckInterval);
+            this.healthCheckInterval = null;
+        }
     }
 
     getSandboxServiceClient(): BaseSandboxService {
@@ -1643,36 +1649,48 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         
         return { runtimeErrors, staticAnalysis, clientErrors };
     }
-
+    
     async deployToSandbox(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string): Promise<PreviewType | null> {
         // If there's already a deployment in progress, wait for it to complete
         if (this.currentDeploymentPromise) {
-            this.logger().info('Deployment already in progress, waiting for completion before starting new deployment');
+            this.logger().info('Deployment already in progress, waiting for completion');
             try {
-                await this.currentDeploymentPromise;
+                const result = await this.currentDeploymentPromise;
+                // If previous deployment succeeded, we're done!
+                // It already deployed all files from state, which includes our changes
+                this.logger().info('Previous deployment completed successfully, returning its result');
+                return result;
             } catch (error) {
+                // Only proceed with new deployment if previous one failed
                 this.logger().warn('Previous deployment failed, proceeding with new deployment:', error);
             }
         }
-
+    
+        this.logger().info("Deploying to sandbox", { files, redeploy, commitMessage, sessionId: this.state.sessionId });
+    
         // Start the actual deployment and track it
         this.currentDeploymentPromise = this.executeDeployment(files, redeploy, commitMessage);
         
+        // Create timeout that resets session if deployment hangs
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+                this.logger().warn('Deployment timed out after 60 seconds, resetting sessionId to provision new sandbox instance');
+                this.resetSessionId();
+                reject(new Error('Deployment timed out after 60 seconds'));
+            }, 60000);
+        });
+        
         try {
-            // Add 60-second timeout to the deployment promise
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => {
-                    reject(new Error('Deployment timed out after 60 seconds'));
-                }, 60000);
-            });
-            
             const result = await Promise.race([
                 this.currentDeploymentPromise,
                 timeoutPromise
             ]);
             return result;
         } finally {
-            // Clear the promise when deployment is complete
+            if (timeoutId !== null) {
+                clearTimeout(timeoutId);
+            }
             this.currentDeploymentPromise = null;
         }
     }
@@ -1709,6 +1727,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         let { sandboxInstanceId } = this.state;
         let previewURL: string | undefined;
         let tunnelURL: string | undefined;
+        let redeployed = false;
 
         // Check if the instance is running
         if (sandboxInstanceId) {
@@ -1731,7 +1750,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             sandboxInstanceId = results.runId;
             previewURL = results.previewURL;
             tunnelURL = results.tunnelURL;
-
+            redeployed = true;
             this.setState({
                 ...this.state,
                 sandboxInstanceId,
@@ -1761,6 +1780,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
             // Launch a set interval to check the health of the deployment. If it fails, redeploy
             this.healthCheckInterval = setInterval(async () => {
+                // Don't trigger redeploy if there's already a deployment in progress
+                if (this.currentDeploymentPromise !== null) {
+                    return;
+                }
+                
                 const status = await this.getSandboxServiceClient().getInstanceStatus(sandboxInstanceId!);
                 if (!status || !status.success) {
                     this.logger().error(`DEPLOYMENT CHECK FAILED: Failed to get status for instance ${sandboxInstanceId}, redeploying...`);
@@ -1781,6 +1805,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             sandboxInstanceId,
             previewURL,
             tunnelURL,
+            redeployed,
         };
     }
 
@@ -1799,10 +1824,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 sandboxInstanceId,
                 previewURL,
                 tunnelURL,
+                redeployed,
             } = await this.ensurePreviewExists(redeploy);
             
             // Deploy files
-            const filesToWrite = files.length > 0 
+            const filesToWrite = files.length > 0 && !redeployed    // If redeployed, we should write all files again
                 ? files.map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents
