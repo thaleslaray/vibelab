@@ -177,7 +177,79 @@ These are the instructions and quality standards that must be followed to implem
        - Validate array length before element access
        - Use try-catch for async operations
        - Handle undefined values gracefully
+
+    5. Layout Architecture Requirements (MANDATORY, copy these patterns)
+    - Full-height page layout:
+    <div className="h-screen flex flex-col">
+        <header className="flex-shrink-0">...</header>
+        <main className="flex-1 overflow-auto">...</main>
+    </div>
+
+    - Sidebar + main layout (Finder/IDE/Dashboard):
+    <div className="h-full flex">
+        <aside className="w-64 min-w-[180px] flex-shrink-0">...</aside>
+        <main className="flex-1 overflow-auto">...</main>
+    </div>
+    Notes:
+    - Always give the sidebar a min-width via CSS (min-w-[180px]) to prevent text cutoff.
+    - Prefer CSS min-w on content instead of relying on % minimums.
+
+    - Resizable panels (horizontal):
+    <ResizablePanelGroup direction="horizontal" className="h-full">
+        <ResizablePanel defaultSize={25}>
+        <aside className="h-full min-w-[180px]">...</aside>
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={75}>
+        <main className="h-full overflow-auto">...</main>
+        </ResizablePanel>
+    </ResizablePanelGroup>
+    Notes:
+    - Parent must have explicit height (h-full / h-screen).
+    - Put a ResizableHandle between panels.
+    - Use CSS min-w-[...] on the sidebar content to guarantee readable width.
+
+    - Data-driven rendering (always guard):
+    if (isLoading) return <LoadingSkeleton />;
+    if (error) return <ErrorState message={error} />;
+    if (!items?.length) return <EmptyState />;
+    return <List items={items} />;
+
+    6. Framer Motion Drag Handle Policy (correct API usage)
+    - Framer Motion does NOT support a dragHandle prop.
+    - If you need a specific header as the drag handle:
+    - Use useDragControls(), set dragListener={false} on the draggable motion.div
+    - In the header onPointerDown, call controls.start(e)
+    - Example:
+        const controls = useDragControls();
+        <motion.div drag dragControls={controls} dragListener={false}>...</motion.div>
+        <header onPointerDown={(e) => controls.start(e)}>...</header>
+
+    7. Type Safety: Prefer proper types over casting (avoid misuse of \`as\`)
+    - ✅ Correct: Fix object shape to match type
+      const node: VFSFolder = { id, type: 'folder', name, parentId, children: [] };
     
+    - ⚠️ Use sparingly: \`as\` for DOM elements or explicit type narrowing
+      const input = event.target as HTMLInputElement;
+    
+    - ❌ Wrong: Forcing incompatible types (missing required fields)
+      const node = { id, type: 'folder', name } as VFSFolder; // Missing children!
+
+    8. Null Safety & Async Error Handling (CRITICAL - prevents most runtime crashes)
+    - Always use optional chaining: user?.profile?.name not user.profile.name
+    - Always use nullish coalescing for defaults: items ?? [] not items || []
+    - ALWAYS wrap async operations in try-catch with error state:
+      try {
+        const data = await fetch('/api/data');
+        setData(data);
+        setError(null);
+      } catch (err) {
+        console.error('API failed:', err);
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      }
+    - Add debug logging before potential crashes:
+      if (!data) { console.warn('Data missing'); return <Loading />; }
+
     **CODE QUALITY STANDARDS:**
     •   **Robustness:** Write fault-tolerant code with proper error handling and fallbacks
     •   **State Management:** Ensure UI reflects application state correctly, no infinite re-renders

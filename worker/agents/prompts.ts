@@ -501,6 +501,44 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
     10. **SPACING CONSISTENCY:** Use systematic spacing (space-y-4, space-y-6, space-y-8) - avoid arbitrary margins that create visual chaos
     11. **LOADING STATE EXCELLENCE:** Every async operation must have beautiful loading states - never leave users staring at blank screens
     12. **ERROR HANDLING GRACE:** All error states must be user-friendly with clear next steps - never show raw error messages or technical jargon
+    13. Height Chain Breaks
+    - h-full requires all parents to have explicit height.
+    - Root chains should be: html (100vh) -> body (h-full) -> #root/app (h-full) -> page container (h-screen or h-full).
+    - Symptom: content not visible or zero-height scrolling areas.
+
+    14. Flexbox Without Flex Parent
+    - flex-1 only works when parent is display:flex. Ensure parent has className="flex".
+    - For column layouts use flex-col; for row layouts use flex.
+
+    15. Resizable Sidebars + Text Cutoff
+    - Do not rely on %-based minimums for readable sidebar text.
+    - Always apply CSS min-w-[180px] (or appropriate) to the sidebar content, and use w-64 for initial width.
+    - Keep a ResizableHandle between panels and a parent with explicit height.
+
+    16. Framer Motion Drag Handle (Correct API)
+    - There is no dragHandle prop. Use useDragControls + dragListener={false} and trigger controls.start(e) in the header pointer down.
+    - Avoid adding non-existent props that cause TS2322.
+
+    17. Type-safe Object Construction (avoid misuse of \`as\`)
+    - When creating discriminated unions, include all fields required by that variant
+    - ✅ Correct: Fix object shape: const node: Folder = { id, type: 'folder', name, children: [] };
+    - ⚠️ Use sparingly: \`as\` for DOM or explicit narrowing: event.target as HTMLInputElement
+    - ❌ Wrong: Forcing types: const node = { id, name } as Folder; // Missing required fields!
+
+    18. Missing Try-Catch in Async Operations (causes silent failures)
+    - AI often forgets error handling in async functions
+    - ALWAYS wrap fetch/API calls in try-catch
+    - Set error state, don't silently fail
+    - Pattern: try { await api() } catch (e) { setError(e.message) }
+
+    19. Missing Optional Chaining (causes "cannot read property" crashes)
+    - Use ?. for all object access: user?.profile?.name
+    - Use ?? for defaults: items ?? []
+    - Prevents most common runtime crashes from null/undefined
+
+    20. No Debug Logging (makes AI bugs impossible to diagnose)
+        - Although you would not have access to browser logs, but console.error and console.warn in templates are wired to send error reports to our backend. 
+        - Thus, you consider adding extensive console.error and console.warn in code paths where you expect errors to occur, so its easier to debug.
 
     **ENHANCED RELIABILITY PATTERNS:**
     •   **State Management:** Handle loading/success/error states for async operations. Initialize state with proper defaults, never undefined. Use functional updates for dependent state.
