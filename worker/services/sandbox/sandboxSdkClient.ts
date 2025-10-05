@@ -182,9 +182,9 @@ export class SandboxSdkClient extends BaseSandboxService {
 
     private async getInstanceMetadata(instanceId: string): Promise<InstanceMetadata> {
         // Check cache first
-        // if (this.metadataCache.has(instanceId)) {
-        //     return this.metadataCache.get(instanceId)!;
-        // }
+        if (this.metadataCache.has(instanceId)) {
+            return this.metadataCache.get(instanceId)!;
+        }
         
         // Cache miss - read from disk
         try {
