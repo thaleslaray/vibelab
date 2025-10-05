@@ -1649,7 +1649,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         
         return { runtimeErrors, staticAnalysis, clientErrors };
     }
-    
+
     async deployToSandbox(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string): Promise<PreviewType | null> {
         // If there's already a deployment in progress, wait for it to complete
         if (this.currentDeploymentPromise) {
@@ -1795,7 +1795,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     }
                     await this.deployToSandbox([], true);
                 }
-            }, 2000);
+            }, 5000);
 
             // Launch a static analysis on the codebase in the background to build cache
             // this.runStaticAnalysisCode();
@@ -2569,10 +2569,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     statusCode: response.status,
                     statusText: response.statusText
                 });
-                // If error is 422 timeout, retry deploying
-                if (response.status === 422) {
-                    this.deployToSandbox();
-                }
                 throw new Error(error);
             }
             

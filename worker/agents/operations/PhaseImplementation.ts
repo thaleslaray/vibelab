@@ -86,6 +86,7 @@ ${PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION}
 ║  ❌ FORBIDDEN - WILL CAUSE INFINITE LOOP:                                     ║
 ║     const { a, b, c } = useStore(s => ({ a: s.a, b: s.b, c: s.c }))           ║
 ║     const items = useStore(s => s.getItems())  // Returns new array           ║
+║     const { a, b, c } = useStore() // NO Selector provided!                   ║
 ║                                                                               ║
 ║  ✅ REQUIRED - TWO SAFE PATTERNS:                                             ║
 ║     // Pattern 1: Separate selectors (foolproof, always safe)                ║
@@ -140,6 +141,7 @@ These are the only dependencies, components and plugins available for the projec
 
 // Hopefully most of the system prompt should get cached
 // I know things are very redundant here, but I am tired of having it write code with re-render loops
+// Sorry for all the extra tokens these might eat up. You may remove the redundant stuff in your versions though
 
 const USER_PROMPT = `**Phase Implementation**
 
@@ -156,9 +158,21 @@ These are the instructions and quality standards that must be followed to implem
           ✅ SAFE Option 1: const a = useStore(s => s.a); const b = useStore(s => s.b);
           ✅ SAFE Option 2: import { useShallow } from 'zustand/react/shallow';
                            const { a, b } = useStore(useShallow(s => ({ a: s.a, b: s.b })));
-          ❌ FORBIDDEN: const { a, b } = useStore(s => ({ a: s.a, b: s.b }))  // NO useShallow = CRASH
+          ❌ FORBIDDEN: These ALL cause infinit loops:
+            Pattern 1: const { a, b } = useStore(s => ({ a: s.a, b: s.b }))  // Object literal.  NO useShallow = CRASH
+            Pattern 2: const { a, b } = useStore()  // NO SELECTOR = returns whole state
+            Pattern 3: const state = useStore(); const { a, b } = state;  // Destructure after
+        
+        For example, 
+        // This works fine in regular React:
+        const { user, isLoading } = useContext(UserContext);
+
+        // But this is not:
+        const { vfs, loading } = useVFSStore();  // ❌ WRONG!
+        // Zustand is subscription-based, not context-based!
           
-          **Default to Option 1 when unsure. Option 2 requires useShallow import.**
+        **Default to Option 1 when unsure. Option 2 requires useShallow import.**
+        **Destructuring from a returned object creates NEW references every render = loop**
         - Avoid unconditional setState in useEffect
         - Stabilize object/array references with useMemo/useCallback
     
@@ -327,7 +341,7 @@ Every single file listed in <CURRENT_PHASE> needs to be implemented in this phas
 
 ⚠️  **ZUSTAND SELECTOR POLICY** — ZERO TOLERANCE
 - Do NOT return objects/arrays from \`useStore\` selectors
-- Do NOT destructure from object-literal selectors (e.g., \`const { a, b } = useStore((s) => ({ a: s.a, b: s.b }))\`)
+- STRONGLY refer to all previous zustand guidelines
 - Do NOT call methods that return arrays/objects: \`useStore(s => s.getItems())\` ❌
 - NEVER use: \`state.getXxx()\`, \`state.computeXxx()\`, \`state.findXxx()\` in selectors
 - Always select primitives individually via separate \`useStore\` calls
