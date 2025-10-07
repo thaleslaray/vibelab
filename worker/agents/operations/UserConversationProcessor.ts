@@ -454,7 +454,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             }
             messages.push({...createAssistantMessage(result.string), conversationId: IdGenerator.generateConversationId()});
 
-            logger.info("Current conversation history", { messages });
+            // logger.info("Current conversation history", { messages });
             return {
                 conversationResponse,
                 messages: messages
