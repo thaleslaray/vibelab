@@ -1637,8 +1637,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 "CF_AI_API_KEY": await generateAppProxyToken(this.state.inferenceContext.agentId, this.state.inferenceContext.userId, this.env)
             }
         }
-
-        this.logger().info(`Creating sandbox instance with env vars: ${JSON.stringify(localEnvVars, null, 2)}`);
         
         const createResponse = await this.getSandboxServiceClient().createInstance(templateName, `v1-${projectName}`, webhookUrl, localEnvVars);
         if (!createResponse || !createResponse.success || !createResponse.runId) {
