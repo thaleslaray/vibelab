@@ -7,6 +7,7 @@ import { createApp } from './app';
 // import { sentryOptions } from './observability/sentry';
 import { DORateLimitStore as BaseDORateLimitStore } from './services/rate-limit/DORateLimitStore';
 import { getPreviewDomain } from './utils/urls';
+import { proxyToAiGateway } from './services/aigateway-proxy/controller';
 
 // Durable Object and Service exports
 export { UserAppSandboxService, DeployerService } from './services/sandbox/sandboxSdkClient';
@@ -18,6 +19,17 @@ export const DORateLimitStore = BaseDORateLimitStore;
 
 // Logger for the main application and handlers
 const logger = createLogger('App');
+
+function setOriginControl(env: Env, request: Request, currentHeaders: Headers): Headers {
+    const previewDomain = env.CUSTOM_DOMAIN
+    const origin = request.headers.get('Origin');
+
+    const allowedOrigin = `https://${previewDomain}`;
+    if (origin === allowedOrigin) {
+        currentHeaders.set('Access-Control-Allow-Origin', allowedOrigin);
+    }
+    return currentHeaders;
+}
 
 /**
  * Handles requests for user-deployed applications on subdomains.
@@ -41,13 +53,15 @@ async function handleUserAppRequest(request: Request, env: Env): Promise<Respons
 		logger.info(`Serving response from sandbox for: ${hostname}`);
 		
 		// Add headers to identify this as a sandbox response
-		const headers = new Headers(sandboxResponse.headers);
+		let headers = new Headers(sandboxResponse.headers);
 		
         if (sandboxResponse.status === 500) {
             headers.set('X-Preview-Type', 'sandbox-error');
         } else {
             headers.set('X-Preview-Type', 'sandbox');
         }
+        headers = setOriginControl(env, request, headers);
+        headers.append('Vary', 'Origin');
 		headers.set('Access-Control-Expose-Headers', 'X-Preview-Type');
 		
 		return new Response(sandboxResponse.body, {
@@ -73,9 +87,11 @@ async function handleUserAppRequest(request: Request, env: Env): Promise<Respons
 		const dispatcherResponse = await worker.fetch(request);
 		
 		// Add headers to identify this as a dispatcher response
-		const headers = new Headers(dispatcherResponse.headers);
+		let headers = new Headers(dispatcherResponse.headers);
 		
 		headers.set('X-Preview-Type', 'dispatcher');
+        headers = setOriginControl(env, request, headers);
+        headers.append('Vary', 'Origin');
 		headers.set('Access-Control-Expose-Headers', 'X-Preview-Type');
 		
 		return new Response(dispatcherResponse.body, {
@@ -95,6 +111,7 @@ async function handleUserAppRequest(request: Request, env: Env): Promise<Respons
  */
 const worker = {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+        console.log(`Received request: ${request.method} ${request.url}`);
 		// --- Pre-flight Checks ---
 
 		// 1. Critical configuration check: Ensure custom domain is set.
@@ -127,6 +144,11 @@ const worker = {
 			// Serve static assets for all non-API routes from the ASSETS binding.
 			if (!pathname.startsWith('/api/')) {
 				return env.ASSETS.fetch(request);
+			}
+			// AI Gateway proxy for generated apps
+			if (pathname.startsWith('/api/proxy/openai')) {
+				// logger.info(`Handling AI proxy request for: ${url}`);
+				return proxyToAiGateway(request, env, ctx);
 			}
 			// Handle all API requests with the main Hono application.
 			logger.info(`Handling API request for: ${url}`);

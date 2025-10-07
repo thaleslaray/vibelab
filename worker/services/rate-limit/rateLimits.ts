@@ -233,16 +233,17 @@ export class RateLimitService {
 	static async enforceLLMCallsRateLimit(
         env: Env,
 		config: RateLimitSettings,
-		user: AuthUser,
+		userId: string,
+        suffix: string = ""
 	): Promise<void> {
 		
 		if (!config[RateLimitType.LLM_CALLS].enabled) {
 			return;
 		}
 
-		const identifier = await this.getUserIdentifier(user);
+		const identifier = `user:${userId}`;
 		
-		const key = this.buildRateLimitKey(RateLimitType.LLM_CALLS, identifier);
+		const key = this.buildRateLimitKey(RateLimitType.LLM_CALLS, `${identifier}${suffix}`);
 		
 		try {
 			const success = await this.enforce(env, key, config, RateLimitType.LLM_CALLS);

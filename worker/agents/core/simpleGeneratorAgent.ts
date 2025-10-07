@@ -44,6 +44,7 @@ import { generateId } from 'worker/utils/idGenerator';
 import type { ImageAttachment } from '../../types/image-attachment';
 import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
+import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aigateway-proxy/controller';
 
 interface WebhookPayload {
     event: {
@@ -1627,8 +1628,19 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         
         // Generate webhook URL for this agent instance
         const webhookUrl = this.generateWebhookUrl();
+
+        // If AI template is configured, pass AI vars
+        let localEnvVars: Record<string, string> = {};
+        if (this.state.templateDetails.name.includes('agents')) {
+            localEnvVars = {
+                "CF_AI_BASE_URL": generateAppProxyUrl(this.env),
+                "CF_AI_API_KEY": await generateAppProxyToken(this.state.inferenceContext.agentId, this.state.inferenceContext.userId, this.env)
+            }
+        }
+
+        this.logger().info(`Creating sandbox instance with env vars: ${JSON.stringify(localEnvVars, null, 2)}`);
         
-        const createResponse = await this.getSandboxServiceClient().createInstance(templateName, `v1-${projectName}`, webhookUrl);
+        const createResponse = await this.getSandboxServiceClient().createInstance(templateName, `v1-${projectName}`, webhookUrl, localEnvVars);
         if (!createResponse || !createResponse.success || !createResponse.runId) {
             throw new Error(`Failed to create sandbox instance: ${createResponse?.error || 'Unknown error'}`);
         }
