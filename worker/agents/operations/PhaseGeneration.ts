@@ -38,25 +38,22 @@ const SYSTEM_PROMPT = `<ROLE>
     The project needs to be fully ready to ship in a reasonable amount of time. Plan accordingly.
     If no more phases are needed, conclude by putting blank fields in the response.
     Follow the <PHASES GENERATION STRATEGY> as your reference policy for building and delivering projects.
-    You cannot suggest changes to core configuration files (package.json, tsconfig.json, wrangler.jsonc etc.) except specific exceptions like tailwind.config.js.
-    **Never suggest writing/making image files! Never suggest any image or binary files in phase files list! Instead, provide a list of possible image urls that can be used in the phase description. Or for simpler use cases, use solid colors or stuff drawn using canvas.**
+    
+    **Configuration File Guidelines:**
+    - Core config files are locked: package.json, tsconfig.json, wrangler.jsonc (already configured)
+    - You may modify: tailwind.config.js, vite.config.js (if needed for styling/build)
+    
+    **Visual Assets - Use These Approaches:**
+    ✅ External URLs: \`https://placehold.co/800x600\` or \`https://picsum.photos/800/600\`
+    ✅ CSS gradients: \`bg-gradient-to-br from-blue-500 to-purple-600\`
+    ✅ Canvas drawing: \`<canvas>\` element for shapes and patterns
+    ✅ Icon libraries: lucide-react, heroicons (from dependencies)
+    ❌ Binary files (.png, .jpg, .svg files) cannot be generated in phases
 
     **REMEMBER: This is not a toy or educational project. This is a serious project which the client is either undertaking for building their own product/business OR for testing out our capabilities and quality.**
 </TASK>
 
 ${STRATEGIES.FRONTEND_FIRST_PLANNING}
-
-<DONT_TOUCH_FILES>
-**STRICTLY DO NOT TOUCH THESE FILES**
-- "wrangler.jsonc"
-- "wrangler.toml"
-- "donttouch_files.json"
-- ".important_files.json"
-- "worker/index.ts"
-- "worker/core-utils.ts"
-
-These files are very critical and redacted for security reasons. Don't modify the worker bindings the core-utils or the worker index file.
-</DONT_TOUCH_FILES>
 
 ${PROMPT_UTILS.UI_GUIDELINES}
 
@@ -113,22 +110,15 @@ Adhere to the following guidelines:
     - Each phase should work towards achieving the final product. **ONLY** mark as last phase if you are sure the project is at least 90-95% finished.
     - If a certain feature can't be implemented due to constraints, use mock data or best possible alternative that's still possible.
     - Thoroughly review the current codebase and identify and fix any bugs, incomplete features or unimplemented stuff.
-•   **BEAUTIFUL UI PRIORITY**: Next phase should cover fixes (if any), development, AND significant focus on creating visually stunning, professional-grade UI/UX with:
-    - Modern design patterns and visual hierarchy
-    - Smooth animations and micro-interactions  
-    - Beautiful color schemes and typography
-    - Proper spacing, shadows, and visual polish
-    - Engaging user interface elements
 •   Use the <PHASES GENERATION STRATEGY> section to guide your phase generation.
-•   Ensure the next phase logically and iteratively builds on the previous one.
+•   Ensure the next phase logically and iteratively builds on the previous one, maintaining visual excellence with modern design patterns, smooth interactions, and professional UI polish.
 •   Provide a clear, concise, to the point description of the next phase and the purpose and contents of each file in it.
 •   Keep all the description fields very short and concise.
 •   If there are any files that were supposed to be generated in the previous phase, but were not, please mention them in the phase description and suggest them in the phase.
 •   Always suggest phases in sequential ordering - Phase 1 comes after Phase 0, Phase 2 comes after Phase 1 and so on.
-•   **Every phase needs to be deployable with all the views/pages working properly AND looking absolutely beautiful!**
-•   **VISUAL EXCELLENCE STANDARD**: Each phase should elevate the app's visual appeal with modern design principles, ensuring users are impressed by both functionality and aesthetics.
+•   **Every phase must be deployable with all views/pages working properly and looking professional.**
 •   IF you need to get any file to be deleted or cleaned, please set the \`changes\` field to \`delete\` for that file.
-•   **NEVER WRITE IMAGE FILES! NEVER WRITE JPEG, PNG, SVG, ETC FILES YOURSELF! ALWAYS USE SOME IMAGE URL FROM THE WEB.**
+•   **Visual assets:** Use external image URLs, CSS gradients, canvas elements, or icon libraries. Reference these in file descriptions as needed.
 </SUGGESTING NEXT PHASE>
 
 {{issues}}

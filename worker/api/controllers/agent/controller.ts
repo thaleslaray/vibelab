@@ -100,7 +100,7 @@ export class CodingAgentController extends BaseController {
                 userModelConfigs: Object.fromEntries(userModelConfigs),
                 agentId: agentId,
                 userId: user.id,
-                enableRealtimeCodeFix: true, // For now disabled from the model configs itself
+                enableRealtimeCodeFix: false, // This costs us too much, so disabled it for now
                 enableFastSmartCodeFix: false,
             }
                                 
