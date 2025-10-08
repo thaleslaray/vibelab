@@ -457,7 +457,7 @@ class SetupManager {
 			console.log(`\n✅ API keys configured for: ${providedProviders.join(', ')}`);
 		}
 
-		if (!providedProviders.includes('google_ai_studio')) {
+		if (!providedProviders.includes('google-ai-studio')) {
 			console.log('\n⚠️  No Google AI Studio key provided.');
 			console.log('   You may need to update model configs in worker/agents/inferutils/config.ts');
 			console.log('   to use alternative models (OpenAI, Anthropic, etc.) for Gemini fallbacks.');
