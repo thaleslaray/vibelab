@@ -485,14 +485,218 @@ const derivedValue = propValue.toUpperCase(); // No state needed
 \`\`\`
 </REACT_RENDER_LOOP_PREVENTION>`,
 
+    REACT_RENDER_LOOP_PREVENTION_LITE: `
+⚠️⚠️⚠️ ABSOLUTE ZERO-TOLERANCE RULES - VIOLATION CRASHES THE APP ⚠️⚠️⚠️
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                   🚨 REACT INFINITE LOOP PREVENTION 🚨                        ║
+║                                                                               ║
+║  "Maximum update depth exceeded" = render→setState→render loop                ║
+║  React aborts after ~50 nested updates. FIX THESE PATTERNS IMMEDIATELY.       ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  ROOT CAUSE #1: setState DURING RENDER (MOST COMMON)                          ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+❌ FORBIDDEN PATTERNS:
+\`\`\`tsx
+// Direct setState in render
+function Bad() {
+    const [n, setN] = useState(0);
+    setN(n + 1); // ❌ INFINITE LOOP
+    return <div>{n}</div>;
+}
+
+// Conditional setState in render
+if (showModal && !modalOpen) {
+    setModalOpen(true); // ❌ INFINITE LOOP
+}
+
+// setState in useMemo/useCallback
+useMemo(() => {
+    setProcessed(data); // ❌ SIDE EFFECT IN MEMOIZATION
+    return value;
+}, [data]);
+\`\`\`
+
+✅ CORRECT PATTERNS:
+\`\`\`tsx
+// State updates ONLY in event handlers or useEffect
+const handleClick = () => setState(newValue);
+
+useEffect(() => {
+    setModalOpen(showModal);
+}, [showModal]);
+\`\`\`
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  ROOT CAUSE #2: EFFECTS WITHOUT DEPENDENCIES OR GUARDS                        ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+❌ FORBIDDEN:
+\`\`\`tsx
+useEffect(() => {
+    setCount(count + 1); // ❌ NO DEPENDENCY ARRAY = INFINITE LOOP
+});
+\`\`\`
+
+✅ CORRECT:
+\`\`\`tsx
+useEffect(() => {
+    setCount(1);
+}, []); // ✅ Empty array = run once on mount
+
+useEffect(() => {
+    if (userId) { // ✅ Conditional guard
+        fetchUser(userId).then(setUser);
+    }
+}, [userId]);
+\`\`\`
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  ROOT CAUSE #3: UNSTABLE DEPENDENCIES (REFERENTIAL INEQUALITY)                ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+❌ FORBIDDEN:
+\`\`\`tsx
+const filters = { type: 'active' }; // ❌ New object every render
+useEffect(() => { fetch(filters); }, [filters]); // ❌ INFINITE LOOP
+
+const value = { user, setUser }; // ❌ New object every render
+<Context.Provider value={value}> // ❌ ALL CONSUMERS RE-RENDER
+\`\`\`
+
+✅ CORRECT:
+\`\`\`tsx
+const filters = useMemo(() => ({ type: 'active' }), []);
+const value = useMemo(() => ({ user, setUser }), [user]);
+\`\`\`
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  🚨 ZUSTAND STORE SELECTORS - #1 CRASH CAUSE - READ THIS 🚨                  ║
+║                                                                               ║
+║  Zustand is SUBSCRIPTION-BASED, not context-based like React Context.        ║
+║  Object/array selectors create NEW references every render = CRASH           ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+❌ FORBIDDEN PATTERNS (ALL CAUSE INFINITE LOOPS):
+\`\`\`tsx
+// Pattern 1: Object literal selector without useShallow
+const { a, b, c } = useStore(s => ({ a: s.a, b: s.b, c: s.c })); // ❌ CRASH
+
+// Pattern 2: No selector (returns whole state object)
+const { a, b, c } = useStore(); // ❌ CRASH
+const state = useStore(); // ❌ CRASH
+
+// Pattern 3: Calling store methods (return new arrays/objects)
+const items = useStore(s => s.getItems()); // ❌ INFINITE LOOP
+const filtered = useStore(s => s.items.filter(...)); // ❌ INFINITE LOOP
+const mapped = useStore(s => s.data.map(...)); // ❌ INFINITE LOOP
+\`\`\`
+
+✅ CORRECT PATTERNS (CHOOSE ONE):
+\`\`\`tsx
+// Option 1: Separate primitive selectors (RECOMMENDED - foolproof)
+const a = useStore(s => s.a);
+const b = useStore(s => s.b);
+const c = useStore(s => s.c);
+
+// Option 2: useShallow wrapper (advanced, only if needed)
+import { useShallow } from 'zustand/react/shallow';
+const { a, b, c } = useStore(useShallow(s => ({ a: s.a, b: s.b, c: s.c })));
+
+// Option 3: Store methods → Select primitives + useMemo in component
+const items = useStore(s => s.items);
+const filter = useStore(s => s.filter);
+const filtered = useMemo(() => 
+    items.filter(i => i.status === filter), 
+    [items, filter]
+);
+\`\`\`
+
+⚠️ CRITICAL DIFFERENCES:
+\`\`\`tsx
+// This works fine in React Context (context-based):
+const { user, isLoading } = useContext(UserContext); // ✅ OK
+
+// But this CRASHES in Zustand (subscription-based):
+const { user, isLoading } = useStore(); // ❌ CRASH - NOT THE SAME!
+\`\`\`
+
+⚠️ ERROR SIGNATURES - ZUSTAND SELECTOR ISSUES:
+- "Maximum update depth exceeded"
+- "The result of getSnapshot should be cached"
+- "Too many re-renders"
+
+→ SCAN FOR: \`useStore(s => ({ ... }))\`, \`useStore(s => s.getXxx())\`, \`useStore()\`
+→ FIX: Select ONLY primitives, compute derived values with useMemo
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  OTHER COMMON PATTERNS THAT CAUSE LOOPS                                       ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+**Parent/Child Feedback Loops:**
+Child effect updates parent → parent rerenders → child effect runs again
+→ Solution: Lift state up, use idempotent callbacks
+
+**State in Recursive Components:**
+\`\`\`tsx
+// ❌ Each recursion creates new state
+function Tree({ items }) {
+    const [expanded, setExpanded] = useState(new Set());
+    return items.map(i => <Tree items={i.children} />); // ❌ WRONG
+}
+
+// ✅ Lift state to non-recursive parent
+function Tree({ items, expanded, onToggle }) {
+    return items.map(i => <Tree items={i.children} expanded={expanded} onToggle={onToggle} />);
+}
+\`\`\`
+
+**Stale Closures (Correctness Bug):**
+\`\`\`tsx
+// ❌ Captures stale count
+const handleClick = () => setCount(count + 1);
+
+// ✅ Functional update
+const handleClick = useCallback(() => setCount(prev => prev + 1), []);
+\`\`\`
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  ✅ PREVENTION CHECKLIST - THE GOLDEN RULES ✅                                ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+✅ **Move setState out of render** - Only in useEffect/event handlers
+✅ **Dependency arrays required** - Every useEffect must have one
+✅ **Conditional guards in effects** - \`if (condition)\` before setState
+✅ **Stabilize objects/arrays** - useMemo for objects, useCallback for functions
+✅ **Zustand: Primitives only** - \`useStore(s => s.value)\` NOT \`useStore(s => ({ ... }))\`
+✅ **NEVER call methods in selectors** - \`useStore(s => s.getXxx())\` = CRASH
+✅ **No selector = CRASH** - \`useStore()\` returns whole object = infinite loop
+✅ **Lift state from recursion** - Never useState inside recursive components
+✅ **Actions are stable** - Zustand actions NOT in dependency arrays
+✅ **Functional updates** - \`setState(prev => prev + 1)\` for correctness
+✅ **useRef for non-UI data** - Doesn't trigger re-renders
+✅ **Derive, don't mirror** - \`const upper = prop.toUpperCase()\` not useState
+
+**QUICK VALIDATION BEFORE SUBMITTING CODE:**
+→ Search for: \`useStore(s => ({\`, \`useStore(s => s.get\`, \`useStore()\`
+→ Search for: \`setState\` outside event handlers/useEffect
+→ Search for: \`useEffect(() => {\` without \`}, [\`
+→ If found: REWRITE immediately using patterns above
+
+⚠️⚠️⚠️ THESE RULES OVERRIDE ALL OTHER CONSIDERATIONS INCLUDING CODE AESTHETICS ⚠️⚠️⚠️
+⚠️⚠️⚠️ IF YOU WRITE FORBIDDEN PATTERNS, YOU MUST IMMEDIATELY REWRITE THE FILE ⚠️⚠️⚠️`,
+
 COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
     **TOP 6 MISSION-CRITICAL RULES (FAILURE WILL CRASH THE APP):**
     1. **DEPENDENCY VALIDATION:** BEFORE writing any import statement, verify it exists in <DEPENDENCIES>. Common failures: @xyflow/react uses { ReactFlow } not default import, @/lib/utils for cn function. If unsure, check the dependency list first.
-    2. **IMPORT & EXPORT INTEGRITY:** Ensure every component, function, or variable is correctly defined and imported properly (and exported properly). Mismatched default/named imports will cause crashes.
+    2. **IMPORT & EXPORT INTEGRITY:** Ensure every component, function, or variable is correctly defined and imported properly (and exported properly). Mismatched default/named imports will cause crashes. NEVER write \`import React, 'react';\` - always use \`import React from 'react';\`
     3. **NO RUNTIME ERRORS:** Write robust, fault-tolerant code. Handle all edge cases gracefully with fallbacks. Never throw uncaught errors that can crash the application.
     4. **NO UNDEFINED VALUES/PROPERTIES/FUNCTIONS/COMPONENTS etc:** Ensure all variables, functions, and components are defined before use. Never use undefined values. If you use something that isn't already defined, you need to define it.
     5. **STATE UPDATE INTEGRITY:** Never call state setters directly during the render phase; all state updates must originate from event handlers or useEffect hooks to prevent infinite loops.
-    6. **STATE SELECTOR STABILITY:** When using state management libraries (Zustand, Redux), always select primitive values individually. Never return a new object or array from a single selector, as this creates unstable references and will cause infinite render loops. NEVER call store methods like \`state.getXxx()\` inside selectors—they return new references every render.
+    6. **STATE SELECTOR STABILITY:** When using Zustand, ALWAYS select primitive values individually. NEVER \`useStore((state) => ({ ... }))\` (returns new object = infinite loop). NEVER \`useStore(s => s.getXxx())\` (method calls return new references). NEVER \`useStore()\` without selector (whole object = crash). See REACT INFINITE LOOP PREVENTION section for complete patterns.
     
     **UI/UX EXCELLENCE CRITICAL RULES:**
     7. **VISUAL HIERARCHY CLARITY:** Every interface must have clear visual hierarchy - never create pages with uniform text sizes or equal visual weight for all elements
@@ -551,17 +755,7 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
         - Strict DRY (Don't Repeat Yourself) principle.
         - Always try to import or extend existing types, components, functions, variables, etc. instead of redefining something similar.
 
-    •   **When using Zustand with Zustand's immer middleware, never define computed getters on the store. Export typed selectors/hooks that derive from primitive IDs.**
-    •   **Use useStore(selector) with functions that depend on raw state fields (e.g., IDs), not on derived getters.**
-    •   **Keep actions responsible for side-effects (fetch/poll), and selectors responsible for derivation only.**
-    •   **STRICT Zustand Selector Policy (ZERO TOLERANCE):** Do NOT return objects/arrays from \`useStore\` selectors nor destructure multiple values from an object-literal selector. Always select primitives individually. If you need multiple values, call \`useStore\` multiple times.
-    •   If you absolutely must read multiple values in one call, pass zustand's shallow comparator: \`useStore(selector, shallow)\`. Avoid object literals and avoid \`useStore(s => s)\`.
-    
-    **ZUSTAND INFINITE LOOP ERROR SIGNATURES - IMMEDIATE FIX REQUIRED:**
-    If you encounter: "The result of getSnapshot should be cached" or "Maximum update depth exceeded" with Zustand:
-    → Your selector returns unstable references (new object/array each time)
-    → SCAN FOR: \`(state) => ({ ... })\`, \`state.getXxx()\`, \`state.items.filter(...)\`, \`state.items.map(...)\`
-    → FIX: Select ONLY primitives (\`state.count\`, \`state.name\`), compute derived values with \`useMemo\` in component
+    •   **State Management Best Practices:** Keep actions for side-effects, use selectors for derivation only. Export typed selectors/hooks that derive from primitive IDs.
 
     **ALGORITHMIC PRECISION & LOGICAL REASONING:**
     •   **Mathematical Accuracy:** For games/calculations, implement precise algorithms step-by-step. ALWAYS validate boundaries: if (x >= 0 && x < width && y >= 0 && y < height). Use === for exact comparisons.
@@ -582,7 +776,16 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
        - **Importing React and other libraries should be done correctly.**
 
     **CRITICAL SYNTAX ERRORS - PREVENT AT ALL COSTS:**
-    1. **IMPORT SYNTAX**: Always use correct import syntax. NEVER write \`import */styles/globals.css'\` - use \`import './styles/globals.css'\`
+    
+    **CATASTROPHIC IMPORT SYNTAX ERRORS (Zero Tolerance):**
+    ❌ \`import React, 'react';\` → **FATAL**: Comma instead of 'from' keyword = build crash
+    ❌ \`import { scaleOrdinal } from 'd3-scale-chromatic';\` → **WRONG PACKAGE**: scaleOrdinal is in 'd3-scale'
+    ❌ \`import */styles/globals.css'\` → **INVALID**: Missing 'import' or wrong path syntax
+    ✅ \`import React from 'react';\` → **CORRECT**: Default import with 'from' keyword
+    ✅ \`import { useState } from 'react';\` → **CORRECT**: Named imports
+    ✅ \`import './styles/globals.css';\` → **CORRECT**: CSS import
+    
+    1. **IMPORT SYNTAX**: Always use \`import [item] from '[package]';\` - never use commas instead of 'from'
     2. **UNDEFINED VARIABLES**: Always import/define variables before use. \`cn is not defined\` = missing \`import { cn } from './lib/utils'\`
 
     **CRITICAL ERROR RECOVERY PATTERNS:**
@@ -599,12 +802,14 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
     Before writing any code, mentally verify:
     - All imports use correct syntax and paths. Be cautious about named vs default imports wherever needed.
     - All variables are defined before use  
-    - No setState calls during render phase
-    - No object-literal selectors in Zustand: \`useStore((state) => ({ ... }))\` ❌
-    - No method calls in Zustand selectors: \`useStore(s => s.getXxx())\` ❌
-    - No array/object operations in selectors: \`s.items.filter(...)\` ❌
-    - Only primitive selectors: \`useStore(s => s.count)\`, \`useStore(s => s.name)\` ✅
-    - Computed values use useMemo with primitive dependencies ✅
+    - **No setState calls during render phase** - only in useEffect/event handlers
+    - **Zustand selectors are primitives only:**
+        ✅ \`const count = useStore(s => s.count);\` 
+        ✅ \`const name = useStore(s => s.name);\`
+        ❌ \`const { count, name } = useStore(s => ({ count: s.count, name: s.name }));\` = CRASH
+        ❌ \`const data = useStore(s => s.getData());\` = CRASH  
+        ❌ \`const state = useStore();\` = CRASH
+    - **All useEffect hooks have dependency arrays** - no exceptions
     - All Tailwind classes exist in config
     - External dependencies are available
     - Error boundaries around components that might fail
@@ -656,23 +861,16 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
 
         - Import like this:
         \`import { ReactFlow } from '@xyflow/react';\`
-    • **@react-three/fiber ^9.0.0 and @react-three/drei ^10.0.0 require react ^19 and will not work with react ^18.**
+    • **@react-three/fiber ^9.0.0 and @react-three/drei ^10.0.0 require react ^19 and will not work with react ^18. And in general avoid using these**
         - Please upgrade react to 19 to use these packages.
         - With react 18, it will throw runtime error: Cannot read properties of undefined (reading 'S')
+        react@18.3.1 three@^0.160.0 comlink@^4.4.1 idb-keyval@^6.2.1 simplex-noise@^4.0.1 @msgpack/msgpack@^2.8.0 - These work well together
 
     • **No support for websockets and dynamic imports may not work, so please avoid using them.**
     - **Zustand v5 (Always Installed in Templates):**
-      - **Try not to use shallow comparison (\`useShallow\`)** - it's a code smell indicating improper selector usage
-      - Instead of: \`useStore(useShallow(s => ({ a: s.a, b: s.b })))\` ❌
-      - Always use: \`const a = useStore(s => s.a); const b = useStore(s => s.b);\` ✅
-      - Why: Primitives are compared by value automatically, no shallow needed. Shallow adds complexity and is easy to forget.
-    - If you do need to use it, Don't use the v4 syntax: \`useStore(selector, shallow)\`
-    - Use the v5 syntax with the hook: 
-      \`\`\`tsx
-      import { useShallow } from 'zustand/shallow';
-      const state = useStore(useShallow(selector));
-      \`\`\`
-      - Store actions (like setState, updateData) are stable and should NOT be in dependency arrays
+      - Selector patterns: See REACT INFINITE LOOP PREVENTION section for complete guidelines
+      - v5 syntax for useShallow: \`import { useShallow } from 'zustand/react/shallow';\`
+      - Store actions are stable and should NOT be in dependency arrays
 </COMMON DEPENDENCY DOCUMENTATION>
 `,
     COMMANDS: `<SETUP COMMANDS>
@@ -975,8 +1173,8 @@ export const STRATEGIES_UTILS = {
         **If auth functionality is required, provide mock auth functionality primarily. Provide real auth functionality ONLY IF template has persistence layer. Remember to seed the persistence layer with mock data AND Always PREFILL the UI with mock credentials. No oauth needed**
 
         **Applications with single view/page or mostly static content are considered **Simple Projects** and those with multiple views/pages are considered **Complex Projects** and should be designed accordingly.**
-        * **Phase Count:** Aim for a maximum of 1 phase for simple applications and 3-7 phases for complex applications. Each phase should be self-contained. Do not exceed more than ${Math.floor(MAX_PHASES * 0.8)} phases unless addressing complex client feedbacks.
-        * **File Count:** Aim for a maximum of 1-3 files per phase for simple applications and 8-12 files per phase for complex applications.
+        * **Phase Count:** Aim for a maximum of 1 phase for simple applications and 3-7 phases for complex applications. Each phase should be self-contained. Do not exceed more than ${Math.floor(MAX_PHASES * 0.8)} phases unless addressing complex client requirements or feedbacks.
+        * **File Count:** Aim for a maximum of 1-3 files per phase when each file is big and self-container, or 8-12 files per phase when most files are small (< 100 lines).
         * The number of files in the project should be proportional to the number of views/pages that the project has.
         * Keep the size of codebase as small as possible, write encapsulated and abstracted code that can be reused, maximize code and component reuse and modularity. If a function/component is to be used in multiple files, it should be defined in a shared file.
         **DO NOT WRITE/MODIFY README FILES, LICENSES, ESSENTIAL CONFIG, OR OTHER NON-APPLICATION FILES as they are already configured in the final deployment. You are allowed to modify tailwind.config.js, vite.config.js etc if necessary**
@@ -984,8 +1182,8 @@ export const STRATEGIES_UTILS = {
         **DO NOT WRITE pdf files, images, or any other non-text files as they are not supported by the deployment.**
 
         **Examples**:
-            * Building any tic-tac-toe game: Has a single page, simple logic -> **Simple Project** - 1 phase and 1-2 files. Initial phase should yield a perfectly working game.        
-            * Building any themed 2048 game: Has a single page, simple logic -> **Simple Project** - 1 phase and 2 files max. Initial phase should yield a perfectly working game.
+            * Building any tic-tac-toe game: Has a single page, simple logic -> **Simple Project** - 1 phase and 1-2 files that contain most of the code. Initial phase should yield a perfectly working game.        
+            * Building any themed 2048 game: Has a single page, simple logic -> **Simple Project** - 1 phase and 2 files max that contain most of the code. Initial phase should yield a perfectly working game.
             * Building a full chess platform: Has multiple pages -> **Complex Project** - 3-5 phases and 5-15 files, with initial phase having around 5-11 files and should have the primary homepage working with mockups for all other views.
             * Building a full e-commerce platform: Has multiple pages -> **Complex Project** - 3-5 phases and 5-15 files max, with initial phase having around 5-11 files and should have the primary homepage working with mockups for all other views.
     

@@ -38,23 +38,21 @@ const SYSTEM_PROMPT = `<ROLE>
     The project needs to be fully ready to ship in a reasonable amount of time. Plan accordingly.
     If no more phases are needed, conclude by putting blank fields in the response.
     Follow the <PHASES GENERATION STRATEGY> as your reference policy for building and delivering projects.
-    You cannot suggest changes to core configuration files (package.json, tsconfig.json, wrangler.jsonc etc.) except specific exceptions like tailwind.config.js.
-    **Never write image files! Never write jpeg, png, svg, etc files yourself! Always use some image url from the web.**
+    
+    **Configuration File Guidelines:**
+    - Core config files are locked: package.json, tsconfig.json, wrangler.jsonc (already configured)
+    - You may modify: tailwind.config.js, vite.config.js (if needed for styling/build)
+    
+    **Visual Assets - Use These Approaches:**
+    ✅ External URLs: Use unsplash.com or placehold.co for images
+    ✅ Canvas drawing: \`<canvas>\` element for shapes and patterns
+    ✅ Icon libraries: lucide-react, heroicons (from dependencies)
+    ❌ Binary files (.png, .jpg, .svg files) cannot be generated in phases
+
+    **REMEMBER: This is not a toy or educational project. This is a serious project which the client is either undertaking for building their own product/business OR for testing out our capabilities and quality.**
 </TASK>
 
 ${STRATEGIES.FRONTEND_FIRST_PLANNING}
-
-<DONT_TOUCH_FILES>
-**STRICTLY DO NOT TOUCH THESE FILES**
-- "wrangler.jsonc"
-- "wrangler.toml"
-- "donttouch_files.json"
-- ".important_files.json"
-- "worker/index.ts"
-- "worker/core-utils.ts"
-
-These files are very critical and redacted for security reasons. Don't modify the worker bindings the core-utils or the worker index file.
-</DONT_TOUCH_FILES>
 
 ${PROMPT_UTILS.UI_GUIDELINES}
 
@@ -118,15 +116,14 @@ Adhere to the following guidelines:
     - Proper spacing, shadows, and visual polish
     - Engaging user interface elements
 •   Use the <PHASES GENERATION STRATEGY> section to guide your phase generation.
-•   Ensure the next phase logically and iteratively builds on the previous one.
+•   Ensure the next phase logically and iteratively builds on the previous one, maintaining visual excellence with modern design patterns, smooth interactions, and professional UI polish.
 •   Provide a clear, concise, to the point description of the next phase and the purpose and contents of each file in it.
 •   Keep all the description fields very short and concise.
 •   If there are any files that were supposed to be generated in the previous phase, but were not, please mention them in the phase description and suggest them in the phase.
 •   Always suggest phases in sequential ordering - Phase 1 comes after Phase 0, Phase 2 comes after Phase 1 and so on.
-•   **Every phase needs to be deployable with all the views/pages working properly AND looking absolutely beautiful!**
-•   **VISUAL EXCELLENCE STANDARD**: Each phase should elevate the app's visual appeal with modern design principles, ensuring users are impressed by both functionality and aesthetics.
+•   **Every phase must be deployable with all views/pages working properly and looking professional.**
 •   IF you need to get any file to be deleted or cleaned, please set the \`changes\` field to \`delete\` for that file.
-•   **NEVER WRITE IMAGE FILES! NEVER WRITE JPEG, PNG, SVG, ETC FILES YOURSELF! ALWAYS USE SOME IMAGE URL FROM THE WEB.**
+•   **Visual assets:** Use external image URLs, canvas elements, or icon libraries. Reference these in file descriptions as needed.
 </SUGGESTING NEXT PHASE>
 
 {{issues}}
@@ -173,7 +170,7 @@ const userPromptFormatter = (issues: IssueReport, userSuggestions?: string[], is
         .replaceAll('{{userSuggestions}}', formatUserSuggestions(userSuggestions));
     
     if (isUserSuggestedPhase) {
-        prompt = prompt.replaceAll('{{generateInstructions}}', 'User requested some changes/modifications. Please thoroughly review the user suggestions and generate the next phase of the application accordingly');
+        prompt = prompt.replaceAll('{{generateInstructions}}', 'User submitted feedback. Please thoroughly review the user needs and generate the next phase of the application accordingly, completely addressing their pain points in the right and proper way. And name the phase accordingly.');
     } else {
         prompt = prompt.replaceAll('{{generateInstructions}}', 'Generate the next phase of the application.');
     }

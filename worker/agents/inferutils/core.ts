@@ -680,7 +680,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                     .filter(result => result.name && result.name.trim() !== '')
                     .map((result, _) => ({
                         role: "tool" as MessageRole,
-                        content: JSON.stringify(result.result),
+                        content: result.result ? JSON.stringify(result.result) : 'done',
                         name: result.name,
                         tool_call_id: result.id,
                     })),
@@ -692,40 +692,46 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                 depth: newDepth
             };
             
+            const executedCallsWithResults = executedToolCalls.filter(result => result.result);
             console.log(`Tool calling depth: ${newDepth}/${MAX_TOOL_CALLING_DEPTH}`);
             
-            if (schema && schemaName) {
-                const output = await infer<OutputSchema>({
-                    env,
-                    metadata,
-                    messages,
-                    schema,
-                    schemaName,
-                    format,
-                    formatOptions,
-                    actionKey,
-                    modelName,
-                    maxTokens,
-                    stream,
-                    tools,
-                    reasoning_effort,
-                    temperature,
-                }, newToolCallContext);
-                return output;
+            if (executedCallsWithResults.length) {
+                if (schema && schemaName) {
+                    const output = await infer<OutputSchema>({
+                        env,
+                        metadata,
+                        messages,
+                        schema,
+                        schemaName,
+                        format,
+                        formatOptions,
+                        actionKey,
+                        modelName,
+                        maxTokens,
+                        stream,
+                        tools,
+                        reasoning_effort,
+                        temperature,
+                    }, newToolCallContext);
+                    return output;
+                } else {
+                    const output = await infer({
+                        env,
+                        metadata,
+                        messages,
+                        modelName,
+                        maxTokens,
+                        actionKey,
+                        stream,
+                        tools,
+                        reasoning_effort,
+                        temperature,
+                    }, newToolCallContext);
+                    return output;
+                }
             } else {
-                const output = await infer({
-                    env,
-                    metadata,
-                    messages,
-                    modelName,
-                    maxTokens,
-                    actionKey,
-                    stream,
-                    tools,
-                    reasoning_effort,
-                    temperature,
-                }, newToolCallContext);
-                return output;
+                console.log('No tool calls with results');
+                return { string: content, toolCallContext: newToolCallContext };
             }
         }
 

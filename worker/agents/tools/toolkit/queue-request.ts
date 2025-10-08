@@ -1,4 +1,4 @@
-import { ErrorResult, ToolDefinition } from '../types';
+import { ToolDefinition } from '../types';
 import { StructuredLogger } from '../../../logger';
 import { CodingAgentInterface } from 'worker/agents/services/implementations/CodingAgent';
 
@@ -6,12 +6,10 @@ type QueueRequestArgs = {
 	modificationRequest: string;
 };
 
-type QueueRequestResult = { content: string } | ErrorResult;
-
 export function createQueueRequestTool(
 	agent: CodingAgentInterface,
 	logger: StructuredLogger
-): ToolDefinition<QueueRequestArgs, QueueRequestResult> {
+): ToolDefinition<QueueRequestArgs, null> {
 	return {
 		type: 'function' as const,
 		function: {
@@ -37,7 +35,7 @@ export function createQueueRequestTool(
 				modificationRequest: args.modificationRequest,
 			});
 			agent.queueRequest(args.modificationRequest);
-			return { content: 'queued successfully' };
+            return null;
 		},
 	};
 }

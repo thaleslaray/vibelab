@@ -25,7 +25,7 @@ export const FileConceptSchema = z.object({
 export const PhaseConceptSchema = z.object({
     name: z.string().describe('Name of the phase (Utility, api, frontend, etc)'),
     description: z.string().describe('Concise, descriptive, directed description of the phase'),
-    files: z.array(FileConceptSchema).describe('Files that need to be written in this stage (new or modified existing), including paths and purposes of each source/code file.'),
+    files: z.array(FileConceptSchema).describe('Files that need to be written in this stage (new or modified existing), including paths and purposes of each source/code file. **NO BINARY FILES**.'),
     lastPhase: z.boolean().describe('Whether this is the last phase to be implemented. If true, no next phase is required and the process will end here'),
 })
 
