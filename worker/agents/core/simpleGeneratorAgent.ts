@@ -120,15 +120,20 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     
     public _logger: StructuredLogger | undefined;
 
+    private initLogger(agentId: string, sessionId: string, userId: string) {
+        this._logger = createObjectLogger(this, 'CodeGeneratorAgent');
+        this._logger.setObjectId(agentId);
+        this._logger.setFields({
+            sessionId,
+            agentId,
+            userId,
+        });
+        return this._logger;
+    }
+
     logger(): StructuredLogger {
         if (!this._logger) {
-            this._logger = createObjectLogger(this, 'CodeGeneratorAgent');
-            this._logger.setObjectId(this.getAgentId());
-            this._logger.setFields({
-                sessionId: this.state.sessionId,
-                agentId: this.getAgentId(),
-                userId: this.state.inferenceContext.userId,
-            });
+            this._logger = this.initLogger(this.getAgentId(), this.state.sessionId, this.state.inferenceContext.userId);
         }
         return this._logger;
     }
@@ -200,6 +205,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     ): Promise<CodeGenState> {
 
         const { query, language, frameworks, hostname, inferenceContext, templateInfo, sandboxSessionId } = initArgs;
+        this.initLogger(inferenceContext.agentId, sandboxSessionId, inferenceContext.userId);
+        
         // Generate a blueprint
         this.logger().info('Generating blueprint', { query, queryLength: query.length, imagesCount: initArgs.images?.length || 0 });
         this.logger().info(`Using language: ${language}, frameworks: ${frameworks ? frameworks.join(", ") : "none"}`);
@@ -307,7 +314,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     resetSessionId() {
         const newSessionId = generateId();
-        this.logger().info(`New Sandbox sessionId initialized: ${newSessionId}`)
+        this.logger().info(`New Sandbox sessionId initialized: ${newSessionId}. Old sessionId: ${this.state.sessionId}`)
         this.setState({
             ...this.state,
             sessionId: newSessionId
@@ -1327,6 +1334,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     async fetchRuntimeErrors(clear: boolean = true) {
+        await this.waitForPreview();
+
         if (!this.state.sandboxInstanceId || !this.fileManager) {
             this.logger().warn("No sandbox instance ID available to fetch errors from.");
             return [];
@@ -1570,20 +1579,33 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return { runtimeErrors, staticAnalysis, clientErrors };
     }
 
+    async waitForPreview(): Promise<void> {
+        this.logger().info("Waiting for preview");
+        if (!this.state.sandboxInstanceId) {
+            const preview = await this.deployToSandbox();
+            if (!preview) {
+                this.logger().error("Failed create preview");
+                return;
+            }
+        }
+        this.logger().info("Waiting for preview completed");
+    }
+
     async deployToSandbox(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string): Promise<PreviewType | null> {
         // If there's already a deployment in progress, wait for it to complete
         if (this.currentDeploymentPromise) {
             this.logger().info('Deployment already in progress, waiting for completion');
             try {
                 const result = await this.currentDeploymentPromise;
-                // If previous deployment succeeded, we're done!
-                // It already deployed all files from state, which includes our changes
-                this.logger().info('Previous deployment completed successfully, returning its result');
-                return result;
+                if (result) {
+                    this.logger().info('Previous deployment completed successfully, returning its result', { result });
+                    return result;
+                }
             } catch (error) {
                 // Only proceed with new deployment if previous one failed
                 this.logger().warn('Previous deployment failed, proceeding with new deployment:', error);
             }
+            return null;
         }
     
         this.logger().info("Deploying to sandbox", { files, redeploy, commitMessage, sessionId: this.state.sessionId });
@@ -1730,16 +1752,16 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     private async executeDeployment(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, retries: number = MAX_DEPLOYMENT_RETRIES): Promise<PreviewType | null> {
-        this.broadcast(WebSocketMessageResponses.DEPLOYMENT_STARTED, {
-            message: "Deploying code to sandbox service",
-            files: files.map(file => ({
-                filePath: file.filePath,
-            }))
-        });
-
-        this.logger().info("Deploying code to sandbox service");
-
         try {
+            this.broadcast(WebSocketMessageResponses.DEPLOYMENT_STARTED, {
+                message: "Deploying code to sandbox service",
+                files: files.map(file => ({
+                    filePath: file.filePath,
+                }))
+            });
+    
+            this.logger().info("Deploying code to sandbox service");
+    
             const {
                 sandboxInstanceId,
                 previewURL,
@@ -1779,7 +1801,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
             return preview;
         } catch (error) {
-            this.logger().error("Error deploying to sandbox service:", error);
+            this.logger().error("Error deploying to sandbox service:", error, { sessionId: this.state.sessionId, sandboxInstanceId: this.state.sandboxInstanceId });
             const errorMsg = error instanceof Error ? error.message : String(error);
             if (errorMsg.includes('Network connection lost') || errorMsg.includes('Container service disconnected') || errorMsg.includes('Internal error in Durable Object storage')) {
                 // For this particular error, reset the sandbox sessionId
@@ -1811,6 +1833,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     async deployToCloudflare(): Promise<{ deploymentUrl?: string; workersUrl?: string } | null> {
         try {
             this.logger().info('Starting Cloudflare deployment');
+            await this.waitForPreview();
             this.broadcast(WebSocketMessageResponses.CLOUDFLARE_DEPLOYMENT_STARTED, {
                 message: 'Starting deployment to Cloudflare Workers...',
                 instanceId: this.state.sandboxInstanceId,
@@ -2250,6 +2273,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             if (!this.state.generatedFilesMap || Object.keys(this.state.generatedFilesMap).length === 0) {
                 throw new Error('No generated files available for export');
             }
+
+            await this.waitForPreview();
 
             // Broadcast export started
             this.broadcast(WebSocketMessageResponses.GITHUB_EXPORT_STARTED, {
