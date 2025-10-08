@@ -27,6 +27,8 @@ function setOriginControl(env: Env, request: Request, currentHeaders: Headers): 
     const allowedOrigin = `https://${previewDomain}`;
     if (origin === allowedOrigin) {
         currentHeaders.set('Access-Control-Allow-Origin', allowedOrigin);
+    } else if (origin?.startsWith('http://localhost')) {
+        currentHeaders.set('Access-Control-Allow-Origin', origin);
     }
     return currentHeaders;
 }
