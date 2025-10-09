@@ -146,9 +146,11 @@ const worker = {
 			}
 			// AI Gateway proxy for generated apps
 			if (pathname.startsWith('/api/proxy/openai')) {
-                // Only handle requests from valid origins
+                // Only handle requests from valid origins of the preview domain
                 const origin = request.headers.get('Origin');
-                if (origin && isOriginAllowed(env, origin)) {
+                const previewDomain = getPreviewDomain(env);
+                
+				if (origin && origin.endsWith(`.${previewDomain}`)) {
                     return proxyToAiGateway(request, env, ctx);
                 }
                 return new Response('Access denied. Invalid origin.', { status: 403 });
