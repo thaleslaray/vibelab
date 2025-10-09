@@ -333,7 +333,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     getSandboxServiceClient(): BaseSandboxService {
         if (this.sandboxServiceClient === undefined) {
             this.logger().info('Initializing sandbox service client');
-            this.sandboxServiceClient = getSandboxService(this.getSessionId());
+            this.sandboxServiceClient = getSandboxService(this.getSessionId(), this.getAgentId());
         }
         return this.sandboxServiceClient;
     }
@@ -2301,7 +2301,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 progress: 30
             });
             
-            const allFiles = this.fileManager.getAllFiles();
+            const allFiles = this.fileManager.getGeneratedFiles();
             // Use consolidated export method that handles the complete flow
             const exportResult = await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options, allFiles);
 

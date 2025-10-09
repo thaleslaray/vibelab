@@ -109,7 +109,7 @@ export class SandboxSdkClient extends BaseSandboxService {
     private sandbox: SandboxType;
     private metadataCache = new Map<string, InstanceMetadata>();
 
-    constructor(sandboxId: string) {
+    constructor(sandboxId: string, agentId: string) {
         if (env.ALLOCATION_STRATEGY === AllocationStrategy.MANY_TO_ONE) {
             sandboxId = getAutoAllocatedSandbox(sandboxId);
         }
@@ -118,7 +118,8 @@ export class SandboxSdkClient extends BaseSandboxService {
         
         this.logger = createObjectLogger(this, 'SandboxSdkClient');
         this.logger.setFields({
-            sandboxId: this.sandboxId
+            sandboxId: this.sandboxId,
+            agentId,
         });
         this.logger.info('SandboxSdkClient initialized', { sandboxId: this.sandboxId });
     }
@@ -2198,8 +2199,19 @@ export class SandboxSdkClient extends BaseSandboxService {
             }
 
             // Use broader file selection - all files if we have any, otherwise tracked files
-            const filesToUse = new Set(finalGitContext.allFiles.length > 0 ? finalGitContext.allFiles : finalGitContext.trackedFiles);
-            const files = allFiles.filter(file => filesToUse.has(file.filePath));
+            const filesToUse = finalGitContext.allFiles.length > 0 ? finalGitContext.allFiles : finalGitContext.trackedFiles;
+            const filesToUseSet = new Set(filesToUse);
+            const cachedFiles = allFiles.filter(file => filesToUseSet.has(file.filePath) && file.fileContents.trim() !== '[REDACTED]');
+            const cachedFilePaths = new Set(cachedFiles.map(file => file.filePath));
+            const filesToFetch = filesToUse.filter(file => !cachedFilePaths.has(file));
+            const filesNotCached = await this.getFileDirect(instanceId, filesToFetch);
+            const files = [...cachedFiles, ...filesNotCached];
+
+            this.logger.info(`Total files to push: ${files.length}`, {
+                cachedFilePaths,
+                filesToFetch,
+                filesToUse,
+            });
             
             if (files.length === 0) {
                 this.logger.warn('No files found to push');
@@ -2239,6 +2251,38 @@ export class SandboxSdkClient extends BaseSandboxService {
                 }
             };
         }
+    }
+
+    /**
+     * Read contents of any file
+     */
+    private async getFileDirect(instanceId: string, filePaths: string[]): Promise<{
+        filePath: string;
+        fileContents: string;
+    }[]> {
+        const files: { filePath: string; fileContents: string; }[] = [];
+
+        this.logger.info(`Reading ${filePaths.length} files`, { instanceId });
+
+        for (const filePath of filePaths) {
+            try {
+                const readResult = await this.getSandbox().readFile(`${instanceId}/${filePath}`);
+                if (readResult.success && readResult.content) {
+                    files.push({
+                        filePath,
+                        fileContents: readResult.content
+                    });
+                    this.logger.debug(`Successfully read file: ${filePath}`, { sizeBytes: readResult.content.length });
+                } else {
+                    this.logger.warn(`File read failed or empty: ${filePath}`);
+                }
+            } catch (error) {
+                this.logger.warn(`Failed to read file ${filePath}`, error);
+            }
+        }
+
+        this.logger.info(`Successfully read ${files.length}/${filePaths.length} files`);
+        return files;
     }
 
     /**
