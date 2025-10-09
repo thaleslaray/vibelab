@@ -33,11 +33,13 @@ export interface DORateLimitConfig extends RateLimitConfigBase {
 	burst?: number; // optional burst limit
 	burstWindow?: number; // burst window in seconds (default: 60)
 	bucketSize?: number; // time bucket size in seconds (default: 10)
+	dailyLimit?: number; // optional rolling 24h limit
 }
 
-export type LLMCallsRateLimitConfig = (KVRateLimitConfig | DORateLimitConfig) & {
-    excludeBYOKUsers: boolean;
+export type LLMCallsRateLimitConfig = (DORateLimitConfig) & {
+	excludeBYOKUsers: boolean;
 };
+
 export type RateLimitConfig =
 	| RLRateLimitConfig
 	| KVRateLimitConfig
@@ -52,10 +54,10 @@ export enum RateLimitType {
 }
 
 export interface RateLimitSettings {
-	[RateLimitType.API_RATE_LIMIT]: RLRateLimitConfig | DORateLimitConfig;
-	[RateLimitType.AUTH_RATE_LIMIT]: RLRateLimitConfig | DORateLimitConfig;
-	[RateLimitType.APP_CREATION]: KVRateLimitConfig | DORateLimitConfig;
-	[RateLimitType.LLM_CALLS]: LLMCallsRateLimitConfig | DORateLimitConfig;
+	[RateLimitType.API_RATE_LIMIT]: RLRateLimitConfig;
+	[RateLimitType.AUTH_RATE_LIMIT]: RLRateLimitConfig;
+	[RateLimitType.APP_CREATION]: DORateLimitConfig | KVRateLimitConfig;
+	[RateLimitType.LLM_CALLS]: LLMCallsRateLimitConfig;
 }
 
 export const DEFAULT_RATE_LIMIT_SETTINGS: RateLimitSettings = {
@@ -73,6 +75,7 @@ export const DEFAULT_RATE_LIMIT_SETTINGS: RateLimitSettings = {
 		enabled: true,
 		store: RateLimitStore.DURABLE_OBJECT,
 		limit: 10,
+        dailyLimit: 50,
 		period: 3600, // 1 hour
 	},
 	llmCalls: {
@@ -80,6 +83,7 @@ export const DEFAULT_RATE_LIMIT_SETTINGS: RateLimitSettings = {
 		store: RateLimitStore.DURABLE_OBJECT,
 		limit: 100,
 		period: 60 * 60, // 1 hour
+        dailyLimit: 400,
 		excludeBYOKUsers: true,
 	},
 };
