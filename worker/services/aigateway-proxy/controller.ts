@@ -136,7 +136,7 @@ export async function proxyToAiGateway(request: Request, env: Env, _ctx: Executi
 
         // Enforce rate limit
         const userConfig = await getUserConfigurableSettings(env, app.userId)
-        await RateLimitService.enforceLLMCallsRateLimit(env, userConfig.security.rateLimit, app.userId, "apps")
+        await RateLimitService.enforceLLMCallsRateLimit(env, userConfig.security.rateLimit, app.userId, modelName, "apps")
 
         const { baseURL, apiKey, defaultHeaders } = await getConfigurationForModel(
             modelName,
