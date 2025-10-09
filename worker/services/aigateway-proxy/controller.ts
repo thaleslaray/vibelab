@@ -9,6 +9,16 @@ import { getUserConfigurableSettings } from 'worker/config';
 
 export async function proxyToAiGateway(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     console.log(`[AI Proxy] Received request: ${request.method} ${request.url}`);
+    if (!env.AI_PROXY_JWT_SECRET) {
+        console.error('AI Gateway proxy is not enabled for this platform');
+        // Platform doesnt have ai gateway proxy enabled, return 403
+        return new Response(JSON.stringify({ 
+            error: { message: 'AI Gateway proxy is not enabled for this platform', type: 'invalid_request_error' } 
+        }), { 
+            status: 403, 
+            headers: { 'Content-Type': 'application/json' } 
+        });
+    }
     // Handle CORS preflight requests
     if (request.method === 'OPTIONS') {
         return new Response(null, {
