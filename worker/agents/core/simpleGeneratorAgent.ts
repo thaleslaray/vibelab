@@ -2300,9 +2300,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 step: 'uploading_files',
                 progress: 30
             });
-
+            
+            const allFiles = this.fileManager.getAllFiles();
             // Use consolidated export method that handles the complete flow
-            const exportResult = await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options);
+            const exportResult = await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options, allFiles);
 
             if (!exportResult?.success) {
                 throw new Error(`Failed to export to GitHub repository: ${exportResult?.error}`);
@@ -2319,7 +2320,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     this.fileManager.saveGeneratedFile(readmeFile);
                     await this.deployToSandbox([readmeFile], false, "feat: README updated with cloudflare deploy button");
                     // Export again
-                    await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options);
+                    await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options, allFiles);
                     this.logger().info('Readme committed successfully');
                 } catch (error) {
                     this.logger().error('Failed to commit readme', error);
