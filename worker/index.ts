@@ -8,6 +8,7 @@ import { createApp } from './app';
 import { DORateLimitStore as BaseDORateLimitStore } from './services/rate-limit/DORateLimitStore';
 import { getPreviewDomain } from './utils/urls';
 import { proxyToAiGateway } from './services/aigateway-proxy/controller';
+import { isOriginAllowed } from './config/security';
 
 // Durable Object and Service exports
 export { UserAppSandboxService, DeployerService } from './services/sandbox/sandboxSdkClient';
@@ -21,13 +22,9 @@ export const DORateLimitStore = BaseDORateLimitStore;
 const logger = createLogger('App');
 
 function setOriginControl(env: Env, request: Request, currentHeaders: Headers): Headers {
-    const previewDomain = env.CUSTOM_DOMAIN
     const origin = request.headers.get('Origin');
-
-    const allowedOrigin = `https://${previewDomain}`;
-    if (origin === allowedOrigin) {
-        currentHeaders.set('Access-Control-Allow-Origin', allowedOrigin);
-    } else if (origin?.startsWith('http://localhost')) {
+    
+    if (origin && isOriginAllowed(env, origin)) {
         currentHeaders.set('Access-Control-Allow-Origin', origin);
     }
     return currentHeaders;
@@ -149,8 +146,12 @@ const worker = {
 			}
 			// AI Gateway proxy for generated apps
 			if (pathname.startsWith('/api/proxy/openai')) {
-				// logger.info(`Handling AI proxy request for: ${url}`);
-				return proxyToAiGateway(request, env, ctx);
+                // Only handle requests from valid origins
+                const origin = request.headers.get('Origin');
+                if (origin && isOriginAllowed(env, origin)) {
+                    return proxyToAiGateway(request, env, ctx);
+                }
+                return new Response('Access denied. Invalid origin.', { status: 403 });
 			}
 			// Handle all API requests with the main Hono application.
 			logger.info(`Handling API request for: ${url}`);
