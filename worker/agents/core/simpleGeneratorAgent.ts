@@ -1,4 +1,4 @@
-import { Agent, Connection } from 'agents';
+import { Agent, AgentContext, Connection } from 'agents';
 import { 
     Blueprint, 
     PhaseConceptGenerationSchemaType, 
@@ -46,6 +46,7 @@ import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
 import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aigateway-proxy/controller';
 import { ImageType, uploadImage } from 'worker/utils/images';
+import { ConversationMessage, ConversationState } from '../inferutils/common';
 
 interface WebhookPayload {
     event: {
@@ -79,6 +80,8 @@ interface Operations {
     fastCodeFixer: FastCodeFixerOperation;
     processUserMessage: UserConversationProcessor;
 }
+
+const DEFAULT_CONVERSATION_SESSION_ID = 'default';
 
 /**
  * SimpleCodeGeneratorAgent - Deterministically orhestrated agent
@@ -156,10 +159,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         commandsHistory: [],
         lastPackageJson: '',
         clientReportedErrors: [],
-        // latestScreenshot: undefined,
         pendingUserInputs: [],
         inferenceContext: {} as InferenceContext,
-        // conversationalAssistant: new ConversationalAssistant(this.env),
         sessionId: '',
         hostname: '',
         conversationMessages: [],
@@ -170,6 +171,42 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         reviewingInitiated: false,
         projectUpdatesAccumulator: [],
     };
+
+    /*
+    * Each DO has 10 gb of sqlite storage. However, the way agents sdk works, it stores the 'state' object of the agent as a single row
+    * in the cf_agents_state table. And row size has a much smaller limit in sqlite. Thus, we only keep current compactified conversation
+    * in the agent's core state and store the full conversation in a separate DO table.
+    */
+    getConversationState(id: string = DEFAULT_CONVERSATION_SESSION_ID): ConversationState {
+        // We shall only store compactified conversations in agent's core state
+        const currentConversation = this.state.conversationMessages;
+        // Store full conversations in separate DO table
+        const fullConversation = this.sql<{ messages: ConversationMessage[], id: string}>`SELECT * FROM full_conversations WHERE id = ${id}`;
+        let fullHistory = fullConversation.length > 0 ? fullConversation[0].messages : [];
+        if (fullHistory.length === 0) {
+            // Migration for old states
+            fullHistory = currentConversation;
+        }
+            
+        return {
+            id: id,    // Multiple conversations per agent support coming in the future
+            runningHistory: currentConversation,
+            fullHistory,
+        };
+    }
+
+    setConversationState(conversations: ConversationState) {
+        this.setState({
+            ...this.state,
+            conversationMessages: conversations.runningHistory,
+        });
+        this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${JSON.stringify(conversations.fullHistory)})`;
+    }
+
+    constructor(ctx: AgentContext, env: Env) {
+        super(ctx, env);
+        this.sql`CREATE TABLE IF NOT EXISTS full_conversations (id TEXT PRIMARY KEY, messages TEXT)`;
+    }
 
     async saveToDatabase() {
         this.logger().info(`Blueprint generated successfully for agent ${this.getAgentId()}`);
@@ -2394,7 +2431,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             const conversationalResponse = await this.operations.processUserMessage.execute(
                 { 
                     userMessage, 
-                    pastMessages: this.state.conversationMessages,
+                    conversationState: this.getConversationState(),
                     conversationResponseCallback: (
                         message: string,
                         conversationId: string,
@@ -2415,11 +2452,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 this.getOperationOptions()
             );
 
-            const { conversationResponse, messages } = conversationalResponse;
-            this.setState({
-                ...this.state,
-                conversationMessages: messages
-            });
+            const { conversationResponse, conversationState } = conversationalResponse;
+            this.setConversationState(conversationState);
 
              if (!this.isGenerating) {
                 // If idle, start generation process
@@ -2446,6 +2480,25 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 error: `Error processing user input: ${error instanceof Error ? error.message : String(error)}`
             });
         }
+    }
+
+    /**
+     * Clear conversation history
+     */
+    public clearConversation(): void {
+        const messageCount = this.state.conversationMessages.length;
+                        
+        // Clear conversation messages only from agent's running history
+        this.setState({
+            ...this.state,
+            conversationMessages: []
+        });
+                        
+        // Send confirmation response
+        this.broadcast(WebSocketMessageResponses.CONVERSATION_CLEARED, {
+            message: 'Conversation history cleared',
+            clearedMessageCount: messageCount
+        });
     }
 
     /**

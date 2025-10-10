@@ -14,7 +14,7 @@ import { buildTools } from "../tools/customTools";
 import { PROMPT_UTILS } from "../prompts";
 import { RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { CodeSerializerType } from "../utils/codeSerializers";
-import { ConversationArchiveService } from "../services/implementations/ConversationArchiveService";
+import { ConversationState } from "../inferutils/common";
 
 // Constants
 const CHUNK_SIZE = 64;
@@ -22,7 +22,7 @@ const CHUNK_SIZE = 64;
 // Compactification thresholds
 const COMPACTIFICATION_CONFIG = {
     MAX_TURNS: MAX_LLM_MESSAGES,              // Trigger after 50 conversation turns
-    MAX_ESTIMATED_TOKENS: 100000, // ~400k characters (4 chars ≈ 1 token)
+    MAX_ESTIMATED_TOKENS: 100000,
     PRESERVE_RECENT_MESSAGES: 10, // Always keep last 10 messages uncompacted
     CHARS_PER_TOKEN: 4,         // Rough estimation: 1 token ≈ 4 characters
 } as const;
@@ -49,7 +49,7 @@ function buildToolCallRenderer(callback: ConversationResponseCallback, conversat
 
 export interface UserConversationInputs {
     userMessage: string;
-    pastMessages: ConversationMessage[];
+    conversationState: ConversationState;
     conversationResponseCallback: ConversationResponseCallback;
     errors: RuntimeError[];
     projectUpdates: string[];
@@ -58,7 +58,7 @@ export interface UserConversationInputs {
 
 export interface UserConversationOutputs {
     conversationResponse: ConversationalResponseType;
-    messages: ConversationMessage[];
+    conversationState: ConversationState;
 }
 
 const RelevantProjectUpdateWebsoketMessages = [
@@ -232,7 +232,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
 
     async execute(inputs: UserConversationInputs, options: OperationOptions): Promise<UserConversationOutputs> {
         const { env, logger, context, agent } = options;
-        const { userMessage, pastMessages, errors, images, projectUpdates } = inputs;
+        const { userMessage, conversationState, errors, images, projectUpdates } = inputs;
         logger.info("Processing user message", { 
             messageLength: inputs.userMessage.length,
             hasImages: !!images && images.length > 0,
@@ -268,19 +268,19 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                 onComplete: (args: Record<string, unknown>, _result: unknown) => toolCallRenderer({ name: td.function.name, status: 'success', args })
             }));
 
-            const compactifiedMessages = await this.compactifyContext(pastMessages, env, options, toolCallRenderer, logger);
-            if (compactifiedMessages.length !== pastMessages.length) {
+            const compactState = await this.compactifyContext(conversationState, env, options, toolCallRenderer, logger);
+            if (compactState.runningHistory.length !== conversationState.runningHistory.length) {
                 logger.info("Conversation history compactified", { 
-                    originalLength: pastMessages.length,
-                    newLength: compactifiedMessages.length,
-                    reduction: pastMessages.length - compactifiedMessages.length
+                    fullHistoryLength: conversationState.fullHistory.length,
+                    runningHistoryLength: conversationState.runningHistory.length,
+                    compactifiedRunningHistoryLength: compactState.runningHistory.length,
+                    reduction: conversationState.runningHistory.length - compactState.runningHistory.length
                 });
             }
 
             logger.info("Executing inference for user message", { 
                 messageLength: userMessage.length,
                 aiConversationId,
-                compactifiedMessages,
                 tools
             });
             
@@ -288,7 +288,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             // Use inference message (with images) for AI, but store text-only in history
             const result = await executeInference({
                 env: env,
-                messages: [...systemPromptMessages, ...compactifiedMessages, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}],
+                messages: [...systemPromptMessages, ...compactState.runningHistory, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}],
                 agentActionName: "conversationalResponse",
                 context: options.inferenceContext,
                 tools, // Enable tools for the conversational AI
@@ -318,7 +318,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                 ? createUserMessage(`${userPromptForHistory}\n\n[${images.length} image(s) attached]`)
                 : createUserMessage(userPromptForHistory);
             
-            const messages = [...compactifiedMessages, {...userMessageForHistory, conversationId: IdGenerator.generateConversationId()}];
+            const messages = [{...userMessageForHistory, conversationId: IdGenerator.generateConversationId()}];
 
             // Save the assistant's response to conversation history
             // If tools were called, include the tool call messages from toolCallContext
@@ -334,24 +334,33 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             // logger.info("Current conversation history", { messages });
             return {
                 conversationResponse,
-                messages: messages
+                conversationState: {
+                    ...compactState,
+                    runningHistory: [...compactState.runningHistory, ...messages],
+                    fullHistory: [...compactState.fullHistory, ...messages]
+                }
             };
         } catch (error) {
             logger.error("Error processing user message:", error);
             if (error instanceof RateLimitExceededError || error instanceof SecurityError) {
                 throw error;
             }   
+
+            const fallbackMessages = [
+                {...createUserMessage(userMessage), conversationId: IdGenerator.generateConversationId()},
+                {...createAssistantMessage(FALLBACK_USER_RESPONSE), conversationId: IdGenerator.generateConversationId()}
+            ]
             
             // Fallback response
             return {
                 conversationResponse: {
                     userResponse: FALLBACK_USER_RESPONSE
                 },
-                messages: [
-                    ...pastMessages,
-                    {...createUserMessage(userMessage), conversationId: IdGenerator.generateConversationId()},
-                    {...createAssistantMessage(FALLBACK_USER_RESPONSE), conversationId: IdGenerator.generateConversationId()}
-                ]
+                conversationState: {
+                    ...conversationState,
+                    runningHistory: [...conversationState.runningHistory, ...fallbackMessages],
+                    fullHistory: [...conversationState.fullHistory, ...fallbackMessages]
+                }
             };
         }
     }
@@ -529,43 +538,46 @@ Provide the summary now:`
      * - Respects turn boundaries to avoid tool call fragmentation
      */
     async compactifyContext(
-        messages: ConversationMessage[],
+        conversationState: ConversationState,
         env: Env,
         options: OperationOptions,
         toolCallRenderer: RenderToolCall,
         logger: StructuredLogger
-    ): Promise<ConversationMessage[]> {
+    ): Promise<ConversationState> {
         try {
-            // Check if compactification is needed
-            const analysis = this.shouldCompactify(messages);
+            // Check if compactification is needed on the running history
+            const analysis = this.shouldCompactify(conversationState.runningHistory);
             
             if (!analysis.should) {
                 // No compactification needed
-                return messages;
+                return conversationState;
             }
             
             logger.info('Compactification triggered', {
                 reason: analysis.reason,
                 turns: analysis.turns,
                 estimatedTokens: analysis.estimatedTokens,
-                totalMessages: messages.length
+                totalRunningMessages: conversationState.runningHistory.length,
+                totalFullMessages: conversationState.fullHistory.length
             });
+
+            // Currently compactification would be done on the running history, but should we consider doing it on the full history?
             
             // Find turn boundary for splitting
             const splitIndex = this.findTurnBoundary(
-                messages,
+                conversationState.runningHistory,
                 COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES
             );
             
             // Safety check: ensure we have something to compactify
             if (splitIndex <= 0) {
                 logger.warn('Cannot find valid turn boundary for compactification, preserving all messages');
-                return messages;
+                return conversationState;
             }
             
             // Split messages
-            const messagesToSummarize = messages.slice(0, splitIndex);
-            const recentMessages = messages.slice(splitIndex);
+            const messagesToSummarize = conversationState.runningHistory.slice(0, splitIndex);
+            const recentMessages = conversationState.runningHistory.slice(splitIndex);
             
             logger.info('Compactification split determined', {
                 summarizeCount: messagesToSummarize.length,
@@ -600,24 +612,6 @@ Provide the summary now:`
                 conversationId: archiveId
             };
             
-            // Archive the compacted messages to R2 (non-blocking)
-            const archiveService = new ConversationArchiveService(env, logger);
-            
-            // Fire-and-forget archive (don't block on R2 write)
-            archiveService.archiveMessages(
-                options.agentId,
-                archiveId,
-                messagesToSummarize,
-                summary
-            ).catch(error => {
-                logger.error('Failed to archive conversation segment', { 
-                    error, 
-                    archiveId,
-                    messageCount: messagesToSummarize.length 
-                });
-                // Don't fail compactification if archive fails
-            });
-            
             toolCallRenderer({ 
                 name: 'summarize_history', 
                 status: 'success', 
@@ -631,27 +625,33 @@ Provide the summary now:`
             const compactifiedHistory = [summaryMessage, ...recentMessages];
             
             logger.info('Compactification completed with archival', {
-                originalMessageCount: messages.length,
+                originalMessageCount: conversationState.runningHistory.length,
                 newMessageCount: compactifiedHistory.length,
-                compressionRatio: (compactifiedHistory.length / messages.length).toFixed(2),
+                compressionRatio: (compactifiedHistory.length / conversationState.runningHistory.length).toFixed(2),
                 estimatedTokenSavings: analysis.estimatedTokens - this.estimateTokens(compactifiedHistory),
                 archivedMessageCount: messagesToSummarize.length,
                 archiveId
             });
             
-            return compactifiedHistory;
+            return {
+                ...conversationState,
+                runningHistory: compactifiedHistory
+            };
             
         } catch (error) {
             logger.error('Compactification failed, preserving original messages', { error });
             
             // Safe fallback: if we have too many messages, keep recent ones
-            if (messages.length > COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 3) {
+            if (conversationState.runningHistory.length > COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 3) {
                 const fallbackCount = COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 2;
                 logger.warn(`Applying emergency fallback: keeping last ${fallbackCount} messages`);
-                return messages.slice(-fallbackCount);
+                return {
+                    ...conversationState,
+                    runningHistory: conversationState.runningHistory.slice(-fallbackCount)
+                };
             }
-            
-            return messages;
+
+            return conversationState;
         }
     }
 
