@@ -9,7 +9,6 @@ import { StructuredLogger } from "../../logger";
 import { IdGenerator } from '../utils/idGenerator';
 import { MAX_LLM_MESSAGES } from '../constants';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
-import type { ImageAttachment } from '../../types/image-attachment';
 import { ToolDefinition } from "../tools/types";
 import { buildTools } from "../tools/customTools";
 import { PROMPT_UTILS } from "../prompts";
@@ -30,7 +29,7 @@ export interface UserConversationInputs {
     ) => void;
     errors: RuntimeError[];
     projectUpdates: string[];
-    images?: ImageAttachment[];
+    images?: string[];
 }
 
 export interface UserConversationOutputs {
@@ -432,7 +431,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             const userMessageForInference = images && images.length > 0
                 ? createMultiModalUserMessage(
                     userPromptForInference,
-                    images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                    images,
                     'high'
                 )
                 : createUserMessage(userPromptForInference);

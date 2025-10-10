@@ -45,6 +45,7 @@ import type { ImageAttachment } from '../../types/image-attachment';
 import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
 import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aigateway-proxy/controller';
+import { ImageType, uploadImage } from 'worker/utils/images';
 
 interface WebhookPayload {
     event: {
@@ -100,7 +101,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     
     // In-memory storage for user-uploaded images (not persisted in DO state)
     // These are temporary and will be lost if the DO is evicted
-    private pendingUserImages: ImageAttachment[] = [];
+    private pendingUserImages: string[] = [];
     
     protected operations: Operations = {
         codeReview: new CodeReviewOperation(),
@@ -400,7 +401,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info('README.md generated successfully');
     }
 
-    async queueUserRequest(request: string, images?: ImageAttachment[]): Promise<void> {
+    async queueUserRequest(request: string, images?: string[]): Promise<void> {
         this.rechargePhasesCounter(3);
         this.setState({
             ...this.state,
@@ -409,7 +410,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         if (images && images.length > 0) {
             this.logger().info('Storing user images in-memory for phase generation', {
                 imageCount: images.length,
-                filenames: images.map(img => img.filename)
             });
             this.pendingUserImages = [...this.pendingUserImages, ...images];
         }
@@ -2382,6 +2382,14 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             const projectUpdates = await this.getAndResetProjectUpdates();
             this.logger().info('Passing context to user conversation processor', { errors, projectUpdates });
 
+            // If there are images, upload them and pass the URLs to the conversation processor
+            let imageUrls: string[] = [];
+            if (images) {
+                imageUrls = await Promise.all(images.map(async (image) => {
+                    return await uploadImage(this.env, image, ImageType.UPLOADS);
+                }));
+            }
+
             // Process the user message using conversational assistant
             const conversationalResponse = await this.operations.processUserMessage.execute(
                 { 
@@ -2402,7 +2410,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     },
                     errors,
                     projectUpdates,
-                    images
+                    images: imageUrls
                 }, 
                 this.getOperationOptions()
             );
@@ -2438,82 +2446,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 error: `Error processing user input: ${error instanceof Error ? error.message : String(error)}`
             });
         }
-    }
-
-    // ===============================
-    // Screenshot storage helpers
-    // ===============================
-    
-    private base64ToUint8Array(base64: string): Uint8Array {
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
-    }
-
-    private async uploadScreenshotToCloudflareImages(base64: string, filename: string): Promise<string> {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${this.env.CLOUDFLARE_ACCOUNT_ID}/images/v1`;
-        const bytes = this.base64ToUint8Array(base64);
-        const blob = new Blob([bytes], { type: 'image/png' });
-        const form = new FormData();
-        form.append('file', blob, filename);
-
-        // Type guard for Images binding
-        type ImagesBinding = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
-        const maybeImages = (this.env as unknown as { [key: string]: unknown })['IMAGES'];
-        const imagesBinding: ImagesBinding | null = (
-            typeof maybeImages === 'object' && maybeImages !== null &&
-            'fetch' in (maybeImages as Record<string, unknown>) && 
-            typeof (maybeImages as { fetch?: unknown }).fetch === 'function'
-        ) ? (maybeImages as ImagesBinding) : null;
-
-        let resp: Response;
-        if (imagesBinding) {
-            // Use Images service binding when available (no explicit token needed)
-            resp = await imagesBinding.fetch(url, { method: 'POST', body: form });
-        } else if (this.env.CLOUDFLARE_API_TOKEN) {
-            // Fallback to direct API with token
-            resp = await fetch(url, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${this.env.CLOUDFLARE_API_TOKEN}` },
-                body: form,
-            });
-        } else {
-            throw new Error('Cloudflare Images not available: missing IMAGES binding and CLOUDFLARE_API_TOKEN');
-        }
-
-        const json = await resp.json() as {
-            success: boolean;
-            result?: { id: string; variants?: string[] };
-            errors?: Array<{ message?: string }>;
-        };
-
-        if (!resp.ok || !json.success || !json.result) {
-            const errMsg = json.errors?.map(e => e.message).join('; ') || `status ${resp.status}`;
-            throw new Error(`Cloudflare Images upload failed: ${errMsg}`);
-        }
-
-        const variants = json.result.variants || [];
-        if (variants.length > 0) {
-            // Prefer first variant URL
-            return variants[0];
-        }
-        throw new Error('Cloudflare Images upload succeeded without variants');
-    }
-
-    private async uploadScreenshotToR2(base64: string, key: string): Promise<string> {
-        const bytes = this.base64ToUint8Array(base64);
-        await this.env.TEMPLATES_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } });
-
-        // Build a public URL served via Worker route
-        const fileName = key.split('/').pop() as string;
-        const protocol = getProtocolForHost(this.state.hostname);
-        const base = `${protocol}://${this.env.CUSTOM_DOMAIN}`;
-        const agentId = this.state.inferenceContext.agentId;
-        const url = `${base}/api/screenshots/${encodeURIComponent(agentId)}/${encodeURIComponent(fileName)}`;
-        return url;
     }
 
     /**
@@ -2610,33 +2542,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             
             // Get base64 screenshot data
             const base64Screenshot = result.result.screenshot;
-
-            // Prefer Cloudflare Images → then R2 → fallback to data URL
-            const fileStamp = Date.now();
-            const fileBase = `${this.getAgentId()}-${fileStamp}`;
-            let publicUrl: string | null = null;
-
-            // 1) Try Cloudflare Images (REST API)
-            try {
-                publicUrl = await this.uploadScreenshotToCloudflareImages(base64Screenshot, `${fileBase}.png`);
-            } catch (imgErr) {
-                this.logger().warn('Cloudflare Images upload failed, will try R2 fallback', { error: imgErr instanceof Error ? imgErr.message : String(imgErr) });
-            }
-
-            // 2) Try R2 (serve via Worker route) if Images failed
-            if (!publicUrl) {
-                try {
-                    const r2Key = `screenshots/${this.getAgentId()}/${fileBase}.png`;
-                    publicUrl = await this.uploadScreenshotToR2(base64Screenshot, r2Key);
-                } catch (r2Err) {
-                    this.logger().warn('R2 upload fallback failed, will store as data URL', { error: r2Err instanceof Error ? r2Err.message : String(r2Err) });
-                }
-            }
-
-            // 3) Fallback: store data URL directly in DB
-            if (!publicUrl) {
-                publicUrl = `data:image/png;base64,${base64Screenshot}`;
-            }
+            const screenshot: ImageAttachment = {
+                id: this.getAgentId(),
+                filename: 'latest.png',
+                mimeType: 'image/png',
+                base64Data: base64Screenshot
+            };
+            const publicUrl = await uploadImage(this.env, screenshot, ImageType.SCREENSHOTS);
 
             // Persist in database
             try {
