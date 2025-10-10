@@ -40,7 +40,7 @@ export class DORateLimitStore extends DurableObject<Env> {
         super(ctx, env);
     }
 
-    async increment(key: string, config: RateLimitConfig): Promise<RateLimitResult> {
+    async increment(key: string, config: RateLimitConfig, incrementBy: number = 1): Promise<RateLimitResult> {
         await this.ensureInitialized();
         
         const now = Date.now();
@@ -74,7 +74,7 @@ export class DORateLimitStore extends DurableObject<Env> {
 
         // Increment current bucket
         const existing = this.state.buckets.get(bucketKey);
-        const newCount = (existing?.count || 0) + 1;
+        const newCount = (existing?.count || 0) + incrementBy;
         
         this.state.buckets.set(bucketKey, {
             count: newCount,
@@ -85,7 +85,7 @@ export class DORateLimitStore extends DurableObject<Env> {
 
         return { 
             success: true, 
-            remainingLimit: config.limit - mainCount - 1 
+            remainingLimit: config.limit - mainCount - incrementBy 
         };
     }
 

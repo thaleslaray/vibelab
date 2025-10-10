@@ -107,22 +107,13 @@ function getAutoAllocatedSandbox(sessionId: string): string {
 export class SandboxSdkClient extends BaseSandboxService {
     private sandbox: SandboxType;
     private metadataCache = new Map<string, InstanceMetadata>();
-    
-    private envVars?: Record<string, string>;
 
-    constructor(sandboxId: string, envVars?: Record<string, string>) {
+    constructor(sandboxId: string) {
         if (env.ALLOCATION_STRATEGY === AllocationStrategy.MANY_TO_ONE) {
             sandboxId = getAutoAllocatedSandbox(sandboxId);
         }
         super(sandboxId);
         this.sandbox = this.getSandbox();
-        this.envVars = envVars;
-        // Set environment variables FIRST, before any other operations
-        // SHOULD NEVER SEND SECRETS TO SANDBOX!
-        if (this.envVars && Object.keys(this.envVars).length > 0) {
-            this.logger.info('Configuring environment variables', { envVars: Object.keys(this.envVars) });
-            this.sandbox.setEnvVars(this.envVars);
-        }
         
         this.logger = createObjectLogger(this, 'SandboxSdkClient');
         this.logger.setFields({
@@ -840,10 +831,23 @@ export class SandboxSdkClient extends BaseSandboxService {
             this.logger.error(`Error updating project configuration: ${error}`);
             throw error;
         }
-    }  
-    
+    }
 
-    private async setupInstance(instanceId: string, projectName: string, _localEnvVars?: Record<string, string>): Promise<{previewURL: string, tunnelURL: string, processId: string, allocatedPort: number} | undefined> {
+    private async setLocalEnvVars(instanceId: string, localEnvVars: Record<string, string>): Promise<void> {
+        try {
+            const sandbox = this.getSandbox();
+            // Simply save all env vars in '.dev.vars' file
+            const envVarsContent = Object.entries(localEnvVars)
+                .map(([key, value]) => `${key}=${value}`)
+                .join('\n');
+            await sandbox.writeFile(`${instanceId}/.dev.vars`, envVarsContent);
+        } catch (error) {
+            this.logger.error(`Error setting local environment variables: ${error}`);
+            throw error;
+        }
+    }
+
+    private async setupInstance(instanceId: string, projectName: string, localEnvVars?: Record<string, string>): Promise<{previewURL: string, tunnelURL: string, processId: string, allocatedPort: number} | undefined> {
         try {
             const sandbox = this.getSandbox();
             // Update project configuration with the specified project name
@@ -889,6 +893,9 @@ export class SandboxSdkClient extends BaseSandboxService {
             if (installResult.exitCode === 0) {
                 // Try to start development server in background
                 try {
+                    if (localEnvVars) {
+                        await this.setLocalEnvVars(instanceId, localEnvVars);
+                    }
                     // Initialize git repository
                     await this.executeCommand(instanceId, `git init`);
                     this.logger.info('Git repository initialized', { instanceId });
@@ -961,6 +968,12 @@ export class SandboxSdkClient extends BaseSandboxService {
 
     async createInstance(templateName: string, projectName: string, webhookUrl?: string, localEnvVars?: Record<string, string>): Promise<BootstrapResponse> {
         try {
+            const sandbox = this.getSandbox();
+            // Set environment variables FIRST, before any other operations
+            if (localEnvVars && Object.keys(localEnvVars).length > 0) {
+                this.logger.info('Configuring environment variables', { envVars: Object.keys(localEnvVars) });
+                sandbox.setEnvVars(localEnvVars);
+            }
             if (env.ALLOCATION_STRATEGY === 'one_to_one') {
                 // Multiple instances shouldn't exist in the same sandbox
 
@@ -1000,7 +1013,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                 this.fetchRedactedFiles(templateName)
             ]);
             
-            const moveTemplateResult = await this.getSandbox().exec(`mv ${templateName} ${instanceId}`);
+            const moveTemplateResult = await sandbox.exec(`mv ${templateName} ${instanceId}`);
             if (moveTemplateResult.exitCode !== 0) {
                 throw new Error(`Failed to move template: ${moveTemplateResult.stderr}`);
             }
