@@ -72,7 +72,7 @@ export async function uploadImageToCloudflareImages(env: Env, image: ImageAttach
 
 export async function uploadImageToR2(env: Env, image: ImageAttachment, type: ImageType): Promise<string> {
     const bytes = base64ToUint8Array(image.base64Data);
-    const r2Key = `${type}/${image.id}-${type}-${image.filename}`;
+    const r2Key = `${type}/${image.id}/${image.filename}`;
     await env.TEMPLATES_BUCKET.put(r2Key, bytes, { httpMetadata: { contentType: 'image/png' } });
 
     const protocol = getProtocolForHost(env.CUSTOM_DOMAIN);

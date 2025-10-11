@@ -2423,7 +2423,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             let imageUrls: string[] = [];
             if (images) {
                 imageUrls = await Promise.all(images.map(async (image) => {
-                    return await uploadImage(this.env, image, ImageType.UPLOADS);
+                    return await uploadImage(this.env, {
+                        ...image,
+                        id: this.getAgentId(),
+                        filename: encodeURIComponent(`${image.id}-${image.filename}`),
+                    }, ImageType.UPLOADS);
                 }));
             }
 
