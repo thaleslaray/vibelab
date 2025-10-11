@@ -3,10 +3,11 @@
  */
 import * as Sentry from '@sentry/cloudflare';
 import type { LoggerConfig, ObjectContext, LogEntry, LogLevel } from './types';
+import { env } from 'cloudflare:workers';
 
-const DEFAULT_CONFIG: LoggerConfig = {
+export const DEFAULT_CONFIG: LoggerConfig = {
 	level: 'info',
-	prettyPrint: false,
+	prettyPrint: env.ENVIRONMENT === 'dev'
 };
 
 const LOG_LEVELS: Record<LogLevel, number> = {
