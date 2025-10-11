@@ -31,25 +31,11 @@ export async function uploadImageToCloudflareImages(env: Env, image: ImageAttach
     const form = new FormData();
     form.append('file', blob, filename);
 
-    // Type guard for Images binding
-    const maybeImages = (env as unknown as { [key: string]: unknown })['IMAGES'];
-    let resp: Response;
-    if (maybeImages) {
-        // Use Images service binding when available (no explicit token needed)
-        type ImagesBinding = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
-        const imagesBinding = (maybeImages as ImagesBinding);
-
-        resp = await imagesBinding.fetch(url, { method: 'POST', body: form });
-    } else if (env.CLOUDFLARE_API_TOKEN) {
-        // Fallback to direct API with token
-        resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
-            body: form,
-        });
-    } else {
-        throw new Error('Cloudflare Images not available: missing IMAGES binding and CLOUDFLARE_API_TOKEN');
-    }
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+        body: form,
+    });
 
     const json = await resp.json() as {
         success: boolean;
@@ -72,12 +58,12 @@ export async function uploadImageToCloudflareImages(env: Env, image: ImageAttach
 
 export async function uploadImageToR2(env: Env, image: ImageAttachment, type: ImageType): Promise<string> {
     const bytes = base64ToUint8Array(image.base64Data);
-    const r2Key = `${type}/${image.id}/${image.filename}`;
+    const r2Key = `${type}/${image.id}/${encodeURIComponent(image.filename)}`;
     await env.TEMPLATES_BUCKET.put(r2Key, bytes, { httpMetadata: { contentType: 'image/png' } });
 
     const protocol = getProtocolForHost(env.CUSTOM_DOMAIN);
     const base = `${protocol}://${env.CUSTOM_DOMAIN}`;
-    const url = `${base}/api/${encodeURIComponent(r2Key)}`;
+    const url = `${base}/api/${r2Key}`;
     return url;
 }
 
