@@ -261,8 +261,19 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 }, []);
 
                 if (restoredMessages.length > 0) {
-                    logger.debug('Replacing messages with conversation_state history:', restoredMessages.length);
-                    setMessages(restoredMessages);
+                    logger.debug('Merging conversation_state history with existing messages (preserving fetch indicator):', restoredMessages.length);
+                    setMessages(prev => {
+                        const hasFetching = prev.some(m => m.role === 'assistant' && m.conversationId === 'fetching-chat');
+                        let next = prev;
+                        if (hasFetching) {
+                            // Mark fetching tool-event as completed
+                            next = appendToolEvent(next, 'fetching-chat', { name: 'fetching your latest conversations', status: 'success' });
+                            // Append restored messages after the fetch indicator
+                            return [...next, ...restoredMessages];
+                        }
+                        // Fallback: replace if no fetching indicator exists
+                        return restoredMessages;
+                    });
                 }
                 break;
             }
