@@ -7,7 +7,8 @@ import { createSystemMessage, createUserMessage, createMultiModalUserMessage } f
 import { InferenceContext } from '../inferutils/config.types';
 import { TemplateRegistry } from '../inferutils/schemaFormatters';
 import z from 'zod';
-import { imagesToBase64, ProcessedImageAttachment } from 'worker/types/image-attachment';
+import { imagesToBase64 } from 'worker/utils/images';
+import { ProcessedImageAttachment } from 'worker/types/image-attachment';
 
 const logger = createLogger('Blueprint');
 

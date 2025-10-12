@@ -7,7 +7,7 @@ import { Message } from '../inferutils/common';
 import { AgentOperation, getSystemPromptWithProjectContext, OperationOptions } from '../operations/common';
 import { AGENT_CONFIG } from '../inferutils/config';
 import type { UserContext } from '../core/types';
-import { imagesToBase64 } from 'worker/types/image-attachment';
+import { imagesToBase64 } from 'worker/utils/images';
 
 export interface PhaseGenerationInputs {
     issues: IssueReport;

@@ -51,7 +51,7 @@ declare namespace Cloudflare {
 		API_RATE_LIMITER: RateLimit;
 		AUTH_RATE_LIMITER: RateLimit;
 		AI: Ai;
-		IMAGES: ImagesBinding;
+		USE_CLOUDFLARE_IMAGES: boolean;
 		CF_VERSION_METADATA: WorkerVersionMetadata;
 		ASSETS: Fetcher;
 	}

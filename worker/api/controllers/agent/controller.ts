@@ -13,6 +13,7 @@ import { validateWebSocketOrigin } from '../../../middleware/security/websocket'
 import { createLogger } from '../../../logger';
 import { getPreviewDomain } from 'worker/utils/urls';
 import { ImageType, uploadImage } from 'worker/utils/images';
+import { ProcessedImageAttachment } from 'worker/types/image-attachment';
 
 const defaultCodeGenArgs: CodeGenArgs = {
     query: '',
@@ -114,9 +115,9 @@ export class CodingAgentController extends BaseController {
             const websocketUrl = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}/api/agent/${agentId}/ws`;
             const httpStatusUrl = `${url.origin}/api/agent/${agentId}`;
 
-            let imageUrls: string[] = [];
+            let uploadedImages: ProcessedImageAttachment[] = [];
             if (body.images) {
-                imageUrls = await Promise.all(body.images.map(async (image) => {
+                uploadedImages = await Promise.all(body.images.map(async (image) => {
                     return uploadImage(env, image, ImageType.UPLOADS);
                 }));
             }
@@ -138,7 +139,7 @@ export class CodingAgentController extends BaseController {
                 frameworks: body.frameworks || defaultCodeGenArgs.frameworks,
                 hostname,
                 inferenceContext,
-                images: imageUrls,
+                images: uploadedImages,
                 onBlueprintChunk: (chunk: string) => {
                     writer.write({chunk});
                 },

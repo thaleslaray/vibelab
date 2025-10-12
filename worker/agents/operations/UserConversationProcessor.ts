@@ -15,7 +15,8 @@ import { PROMPT_UTILS } from "../prompts";
 import { RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { CodeSerializerType } from "../utils/codeSerializers";
 import { ConversationState } from "../inferutils/common";
-import { downloadR2Image, imagesToBase64, imageToBase64, ProcessedImageAttachment } from "worker/types/image-attachment";
+import { downloadR2Image, imagesToBase64, imageToBase64 } from "worker/utils/images";
+import { ProcessedImageAttachment } from "worker/types/image-attachment";
 
 // Constants
 const CHUNK_SIZE = 64;

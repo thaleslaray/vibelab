@@ -41,7 +41,7 @@ import { prepareCloudflareButton } from '../../utils/deployToCf';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
 import { generateId } from 'worker/utils/idGenerator';
-import { processImage, type ImageAttachment, type ProcessedImageAttachment } from '../../types/image-attachment';
+import { ImageAttachment, type ProcessedImageAttachment } from '../../types/image-attachment';
 import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
 import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aigateway-proxy/controller';
@@ -2433,7 +2433,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             let uploadedImages: ProcessedImageAttachment[] = [];
             if (images) {
                 uploadedImages = await Promise.all(images.map(async (image) => {
-                    return await processImage(this.env, image);
+                    return await uploadImage(this.env, image, ImageType.UPLOADS);
                 }));
 
                 this.logger().info('Uploaded images', { uploadedImages });
@@ -2613,12 +2613,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 mimeType: 'image/png',
                 base64Data: base64Screenshot
             };
-            const publicUrl = await uploadImage(this.env, screenshot, ImageType.SCREENSHOTS);
+            const uploadedImage = await uploadImage(this.env, screenshot, ImageType.SCREENSHOTS);
 
             // Persist in database
             try {
                 const appService = new AppService(this.env);
-                await appService.updateAppScreenshot(this.getAgentId(), publicUrl);
+                await appService.updateAppScreenshot(this.getAgentId(), uploadedImage.publicUrl);
             } catch (dbError) {
                 const error = `Database update failed: ${dbError instanceof Error ? dbError.message : 'Unknown database error'}`;
                 this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
@@ -2633,7 +2633,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
             this.logger().info('Screenshot captured and stored successfully', { 
                 url, 
-                storage: publicUrl.startsWith('data:') ? 'database' : (publicUrl.includes('/api/screenshots/') ? 'r2' : 'images'),
+                storage: uploadedImage.publicUrl.startsWith('data:') ? 'database' : (uploadedImage.publicUrl.includes('/api/screenshots/') ? 'r2' : 'images'),
                 length: base64Screenshot.length
             });
 
@@ -2646,7 +2646,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 timestamp: new Date().toISOString()
             });
 
-            return publicUrl;
+            return uploadedImage.publicUrl;
             
         } catch (error) {
             this.logger().error('Failed to capture screenshot via REST API:', error);

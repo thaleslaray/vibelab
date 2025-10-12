@@ -198,6 +198,16 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                                 if (!type) return null;
                                 if (content.includes('<Internal Memo>')) return null;
 
+                                const convId = String(msg.conversationId || '');
+                                if (type === 'ai' && convId.startsWith('archive-')) {
+                                    return {
+                                        type: 'ai',
+                                        id: (convId || msg.id || generateId()),
+                                        message: 'previous history was compacted',
+                                        isThinking: false,
+                                    } as const;
+                                }
+
                                 return {
                                     type,
                                     id: (msg.conversationId || msg.id || generateId()),
@@ -640,6 +650,9 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     id = convId;
                 }
 
+                const isArchive = id.startsWith('archive-');
+                const placeholder = 'previous history was compacted';
+
                 if (message.tool) {
                     const tool = message.tool;
                     setMessages(prev => appendToolEvent(prev, id, { name: tool.name, status: tool.status }));
@@ -647,14 +660,14 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 }
 
                 if (message.isStreaming) {
-                    setMessages(prev => handleStreamingMessage(prev, id, message.message, false));
+                    setMessages(prev => handleStreamingMessage(prev, id, isArchive ? placeholder : message.message, false));
                     break;
                 }
 
                 setMessages(prev => {
                     const idx = prev.findIndex(m => m.type === 'ai' && m.id === id);
-                    if (idx !== -1) return prev.map((m, i) => i === idx ? { ...m, message: message.message } : m);
-                    return [...prev, createAIMessage(id, message.message)];
+                    if (idx !== -1) return prev.map((m, i) => i === idx ? { ...m, message: (isArchive ? placeholder : message.message) } : m);
+                    return [...prev, createAIMessage(id, isArchive ? placeholder : message.message)];
                 });
                 break;
             }
