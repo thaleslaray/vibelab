@@ -8,7 +8,7 @@ import { setupModelConfigRoutes } from './modelConfigRoutes';
 import { setupModelProviderRoutes } from './modelProviderRoutes';
 import { setupGitHubExporterRoutes } from './githubExporterRoutes';
 import { setupCodegenRoutes } from './codegenRoutes';
-import { setupScreenshotRoutes } from './screenshotRoutes';
+import { setupScreenshotRoutes } from './imagesRoutes';
 import { setupSentryRoutes } from './sentryRoutes';
 import { Hono } from "hono";
 import { AppEnv } from "../../types/appenv";

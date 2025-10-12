@@ -24,12 +24,25 @@ export interface ImageAttachment {
 	/** Base64-encoded image data (without data URL prefix) */
 	base64Data: string;
 	/** Size of the original file in bytes */
-	size: number;
+	size?: number;
 	/** Optional dimensions if available */
 	dimensions?: {
 		width: number;
 		height: number;
 	};
+}
+
+export interface ProcessedImageAttachment {
+	/** MIME type of the image */
+	mimeType: SupportedImageMimeType;
+	/** Base64-encoded image data (without data URL prefix) */
+	base64Data?: string;
+    /** R2 key of the image */
+    r2Key: string;
+    /** URL of the image */
+    publicUrl: string;
+    /** image data hash */
+    hash: string;
 }
 
 /**

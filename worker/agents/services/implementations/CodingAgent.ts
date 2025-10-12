@@ -1,5 +1,5 @@
+import { ProcessedImageAttachment } from "worker/types/image-attachment";
 import { ICodingAgent } from "../interfaces/ICodingAgent";
-import { ImageAttachment } from "worker/types/image-attachment";
 
 /*
 * CodingAgentInterface - stub for passing to tool calls
@@ -32,7 +32,7 @@ export class CodingAgentInterface {
         }
     }
 
-    queueRequest(request: string, images?: ImageAttachment[]): void {
+    queueRequest(request: string, images?: ProcessedImageAttachment[]): void {
         this.agentStub.queueUserRequest(request, images);
     }
 }

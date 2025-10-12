@@ -4,9 +4,9 @@ import type { ClientReportedErrorType, FileOutputType, PhaseConceptType } from '
 import type { ConversationMessage } from '../inferutils/common';
 import type { InferenceContext } from '../inferutils/config.types';
 import type { TemplateDetails } from '../../services/sandbox/sandboxTypes';
-import type { ImageAttachment } from '../../types/image-attachment';
 import { TemplateSelection } from '../schemas';
 import { CurrentDevState } from './state';
+import { ProcessedImageAttachment } from 'worker/types/image-attachment';
 
 export interface AgentInitArgs {
     query: string;
@@ -19,9 +19,8 @@ export interface AgentInitArgs {
         selection: TemplateSelection;
     }
     sandboxSessionId: string
-    images?: ImageAttachment[];
+    images?: ProcessedImageAttachment[];
     onBlueprintChunk: (chunk: string) => void;
-    // writer: WritableStreamDefaultWriter<{chunk: string}>;
 }
 
 export interface AllIssues {
@@ -49,7 +48,7 @@ export interface AgentSummary {
 
 export interface UserContext {
     suggestions?: string[];
-    images?: ImageAttachment[];
+    images?: ProcessedImageAttachment[];  // Image URLs
 }
 
 export interface PhaseExecutionResult {

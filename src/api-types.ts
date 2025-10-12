@@ -147,6 +147,10 @@ export type {
   CodeGenState 
 } from 'worker/agents/core/state';
 
+export type {
+  ConversationMessage,
+} from 'worker/agents/inferutils/common';
+
 export type { 
   RuntimeError,
   StaticAnalysisResponse 

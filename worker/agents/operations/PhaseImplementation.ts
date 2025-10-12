@@ -13,6 +13,7 @@ import { IsRealtimeCodeFixerEnabled, RealtimeCodeFixer } from '../assistants/rea
 import { AGENT_CONFIG } from '../inferutils/config';
 import { CodeSerializerType } from '../utils/codeSerializers';
 import type { UserContext } from '../core/types';
+import { imagesToBase64 } from 'worker/utils/images';
 
 export interface PhaseImplementationInputs {
     phase: PhaseConceptType
@@ -458,7 +459,7 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
         const userMessage = userContext?.images && userContext.images.length > 0
             ? createMultiModalUserMessage(
                 userPrompt,
-                userContext.images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                await imagesToBase64(env, userContext?.images), 
                 'high'
             )
             : createUserMessage(userPrompt);

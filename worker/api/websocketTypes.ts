@@ -1,5 +1,6 @@
 import type { ClientReportedErrorType, CodeReviewOutputType, FileConceptType, FileOutputType } from "../agents/schemas";
 import type { CodeGenState } from "../agents/core/state";
+import type { ConversationState } from "../agents/inferutils/common";
 import type { CodeIssue, RuntimeError, StaticAnalysisResponse } from "../services/sandbox/sandboxTypes";
 import type { CodeFixResult } from "../services/code-fixer";
 import { IssueReport } from "../agents/domain/values/IssueReport";
@@ -13,6 +14,11 @@ type ErrorMessage = {
 type StateMessage = {
 	type: 'cf_agent_state';
 	state: CodeGenState;
+};
+
+type ConversationStateMessage = {
+    type: 'conversation_state';
+    state: ConversationState;
 };
 
 type RateLimitErrorMessage = {
@@ -303,6 +309,12 @@ type ConversationResponseMessage = {
 	};
 };
 
+type ConversationClearedMessage = {
+	type: 'conversation_cleared';
+	message: string;
+	clearedMessageCount: number;
+};
+
 type DeterministicCodeFixStartedMessage = {
 	type: 'deterministic_code_fix_started';
 	message: string;
@@ -366,6 +378,7 @@ type ServerLogMessage = {
 
 export type WebSocketMessage =
 	| StateMessage
+	| ConversationStateMessage
 	| GenerationStartedMessage
 	| FileGeneratingMessage
 	| FileRegeneratingMessage
@@ -405,6 +418,7 @@ export type WebSocketMessage =
     | RateLimitErrorMessage
 	| UserSuggestionsProcessingMessage
 	| ConversationResponseMessage
+	| ConversationClearedMessage
     | DeterministicCodeFixStartedMessage
     | DeterministicCodeFixCompletedMessage
 	| ModelConfigsInfoMessage

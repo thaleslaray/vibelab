@@ -6,8 +6,9 @@ import { createLogger } from '../../logger';
 import { createSystemMessage, createUserMessage, createMultiModalUserMessage } from '../inferutils/common';
 import { InferenceContext } from '../inferutils/config.types';
 import { TemplateRegistry } from '../inferutils/schemaFormatters';
-import type { ImageAttachment } from '../../types/image-attachment';
 import z from 'zod';
+import { imagesToBase64 } from 'worker/utils/images';
+import { ProcessedImageAttachment } from 'worker/types/image-attachment';
 
 const logger = createLogger('Blueprint');
 
@@ -163,7 +164,7 @@ export interface BlueprintGenerationArgs {
     // Add optional template info
     templateDetails: TemplateDetails;
     templateMetaInfo: TemplateSelection;
-    images?: ImageAttachment[];
+    images?: ProcessedImageAttachment[];
     stream?: {
         chunk_size: number;
         onChunk: (chunk: string) => void;
@@ -203,7 +204,7 @@ export async function generateBlueprint({ env, inferenceContext, query, language
         const userMessage = images && images.length > 0
             ? createMultiModalUserMessage(
                 `CLIENT REQUEST: "${query}"`,
-                images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                await imagesToBase64(env, images), 
                 'high'
               )
             : createUserMessage(`CLIENT REQUEST: "${query}"`);

@@ -33,6 +33,7 @@ import { useAutoScroll } from '@/hooks/use-auto-scroll';
 import { useImageUpload } from '@/hooks/use-image-upload';
 import { useDragDrop } from '@/hooks/use-drag-drop';
 import { ImageAttachmentPreview } from '@/components/image-attachment-preview';
+import { createAIMessage } from './utils/message-helpers';
 
 export default function Chat() {
 	const { chatId: urlChatId } = useParams();
@@ -395,12 +396,13 @@ export default function Chat() {
 	useEffect(() => {
 		if (doneStreaming && !isGeneratingBlueprint && !blueprint) {
 			onCompleteBootstrap();
-			sendAiMessage({
-				id: 'creating-blueprint',
-				message:
+			sendAiMessage(
+				createAIMessage(
+					'creating-blueprint',
 					'Bootstrapping complete, now creating a blueprint for you...',
-				isThinking: true,
-			});
+					true,
+				),
+			);
 		}
 	}, [
 		doneStreaming,
@@ -542,9 +544,9 @@ export default function Chat() {
 
 							{mainMessage && (
 								<AIMessage
-									message={mainMessage.message}
-									isThinking={mainMessage.isThinking}
-									toolEvents={mainMessage.toolEvents}
+									message={mainMessage.content}
+									isThinking={mainMessage.ui?.isThinking}
+									toolEvents={mainMessage.ui?.toolEvents}
 								/>
 							)}
 
@@ -608,20 +610,20 @@ export default function Chat() {
 							)}
 
 							{otherMessages.map((message) => {
-								if (message.type === 'ai') {
+								if (message.role === 'assistant') {
 									return (
 										<AIMessage
-											key={message.id}
-											message={message.message}
-											isThinking={message.isThinking}
-											toolEvents={message.toolEvents}
+											key={message.conversationId}
+											message={message.content}
+											isThinking={message.ui?.isThinking}
+											toolEvents={message.ui?.toolEvents}
 										/>
 									);
 								}
 								return (
 									<UserMessage
-										key={message.id}
-										message={message.message}
+										key={message.conversationId}
+										message={message.content}
 									/>
 								);
 							})}

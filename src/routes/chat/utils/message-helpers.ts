@@ -1,6 +1,6 @@
 import { toast } from 'sonner';
 import { generateId } from '@/utils/id-generator';
-import type { RateLimitError } from '@/api-types';
+import type { RateLimitError, ConversationMessage } from '@/api-types';
 
 export type ToolEvent = {
     name: string;
@@ -8,12 +8,12 @@ export type ToolEvent = {
     timestamp: number;
 };
 
-export type ChatMessage = {
-    type: 'user' | 'ai';
-    id: string;
-    message: string;
-    isThinking?: boolean;
-    toolEvents?: ToolEvent[];
+export type ChatMessage = Omit<ConversationMessage, 'content'> & {
+    content: string;
+    ui?: {
+        isThinking?: boolean;
+        toolEvents?: ToolEvent[];
+    };
 };
 
 /**
@@ -36,18 +36,18 @@ export function isConversationalMessage(messageId: string): boolean {
 }
 
 /**
- * Create an AI message
+ * Create an assistant message
  */
 export function createAIMessage(
-    id: string,
-    message: string,
+    conversationId: string,
+    content: string,
     isThinking?: boolean
 ): ChatMessage {
     return {
-        type: 'ai',
-        id,
-        message,
-        isThinking,
+        role: 'assistant',
+        conversationId,
+        content,
+        ui: { isThinking },
     };
 }
 
@@ -56,9 +56,9 @@ export function createAIMessage(
  */
 export function createUserMessage(message: string): ChatMessage {
     return {
-        type: 'user',
-        id: generateId(),
-        message,
+        role: 'user',
+        conversationId: generateId(),
+        content: message,
     };
 }
 
@@ -104,23 +104,21 @@ export function handleRateLimitError(
  */
 export function addOrUpdateMessage(
     messages: ChatMessage[],
-    newMessage: Omit<ChatMessage, 'type'>,
-    messageType: 'ai' | 'user' = 'ai'
+    newMessage: ChatMessage,
 ): ChatMessage[] {
-    // Special handling for 'main' message - update if thinking, otherwise append
-    if (newMessage.id === 'main') {
-        const mainMessageIndex = messages.findIndex(m => m.id === 'main' && m.isThinking);
+    // Special handling for 'main' assistant message - update if thinking, otherwise append
+    if (newMessage.conversationId === 'main') {
+        const mainMessageIndex = messages.findIndex(m => m.conversationId === 'main' && m.ui?.isThinking);
         if (mainMessageIndex !== -1) {
             return messages.map((msg, index) =>
                 index === mainMessageIndex 
-                    ? { ...msg, ...newMessage, type: messageType }
+                    ? { ...msg, ...newMessage }
                     : msg
             );
         }
     }
-    
     // For all other messages, append
-    return [...messages, { ...newMessage, type: messageType }];
+    return [...messages, newMessage];
 }
 
 /**
@@ -128,22 +126,21 @@ export function addOrUpdateMessage(
  */
 export function handleStreamingMessage(
     messages: ChatMessage[],
-    messageId: string,
+    conversationId: string,
     chunk: string,
     isNewMessage: boolean
 ): ChatMessage[] {
-    const existingMessageIndex = messages.findIndex(m => m.id === messageId && m.type === 'ai');
-    
+    const existingMessageIndex = messages.findIndex(m => m.conversationId === conversationId && m.role === 'assistant');
     if (existingMessageIndex !== -1 && !isNewMessage) {
-        // Append chunk to existing message
+        // Append chunk to existing assistant message
         return messages.map((msg, index) =>
             index === existingMessageIndex
-                ? { ...msg, message: msg.message + chunk }
+                ? { ...msg, content: msg.content + chunk }
                 : msg
         );
     } else {
-        // Create new streaming message
-        return [...messages, createAIMessage(messageId, chunk, false)];
+        // Create new streaming assistant message
+        return [...messages, createAIMessage(conversationId, chunk, false)];
     }
 }
 
@@ -154,42 +151,45 @@ export function handleStreamingMessage(
  */
 export function appendToolEvent(
     messages: ChatMessage[],
-    messageId: string,
+    conversationId: string,
     tool: { name: string; status: 'start' | 'success' | 'error' }
 ): ChatMessage[] {
-    const idx = messages.findIndex(m => m.id === messageId && m.type === 'ai');
+    const idx = messages.findIndex(m => m.conversationId === conversationId && m.role === 'assistant');
     const timestamp = Date.now();
 
-    // If message is not present, create a new placeholder AI message
+    // If message is not present, create a new placeholder assistant message with tool event
     if (idx === -1) {
         const newMsg: ChatMessage = {
-            type: 'ai',
-            id: messageId,
-            message: '',
-            toolEvents: [{ name: tool.name, status: tool.status, timestamp }],
+            role: 'assistant',
+            conversationId,
+            content: '',
+            ui: { toolEvents: [{ name: tool.name, status: tool.status, timestamp }] },
         };
         return [...messages, newMsg];
     }
 
     return messages.map((m, i) => {
         if (i !== idx) return m;
-        const current = m.toolEvents ?? [];
+        const current = m.ui?.toolEvents ?? [];
         if (tool.status === 'success') {
             // Find last 'start' for this tool and flip it to success
             for (let j = current.length - 1; j >= 0; j--) {
                 if (current[j].name === tool.name) {
                     return {
                         ...m,
-                        toolEvents: current.map((ev, k) =>
-                            k === j ? { ...ev, status: 'success', timestamp } : ev
-                        ),
+                        ui: {
+                            ...m.ui,
+                            toolEvents: current.map((ev, k) =>
+                                k === j ? { ...ev, status: 'success', timestamp } : ev
+                            ),
+                        }
                     };
                 }
             }
             // If no prior start, just append success as a separate line
-            return { ...m, toolEvents: [...current, { name: tool.name, status: 'success', timestamp }] };
+            return { ...m, ui: { ...m.ui, toolEvents: [...current, { name: tool.name, status: 'success', timestamp }] } };
         }
         // Default: append event
-        return { ...m, toolEvents: [...current, { name: tool.name, status: tool.status, timestamp }] };
+        return { ...m, ui: { ...m.ui, toolEvents: [...current, { name: tool.name, status: tool.status, timestamp }] } };
     });
 }
