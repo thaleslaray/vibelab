@@ -192,30 +192,43 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         if (fullHistory.length === 0) {
             fullHistory = currentConversation;
         }
+        // Load compact (running) history from sqlite with fallback to in-memory state for migration
+        const compactRows = this.sql<{ messages: string, id: string }>`SELECT * FROM compact_conversations WHERE id = ${id}`;
+        let runningHistory: ConversationMessage[] = [];
+        if (compactRows.length > 0 && compactRows[0].messages) {
+            try {
+                const parsed = JSON.parse(compactRows[0].messages);
+                if (Array.isArray(parsed)) {
+                    runningHistory = parsed as ConversationMessage[];
+                }
+            } catch (_e) {}
+        }
+        if (runningHistory.length === 0) {
+            runningHistory = currentConversation;
+        }
         return {
             id: id,
-            runningHistory: currentConversation,
+            runningHistory,
             fullHistory,
         };
     }
 
     setConversationState(conversations: ConversationState) {
-        this.setState({
-            ...this.state,
-            conversationMessages: conversations.runningHistory,
-        });
-        const serialized = JSON.stringify(conversations.fullHistory);
+        const serializedFull = JSON.stringify(conversations.fullHistory);
+        const serializedCompact = JSON.stringify(conversations.runningHistory);
         try {
-            this.logger().info(`Saving conversation state ${conversations.id}, length: ${serialized.length}`, { fullHistory: conversations.fullHistory });
-            this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${serialized})`;
+            this.logger().info(`Saving conversation state ${conversations.id}, full_length: ${serializedFull.length}, compact_length: ${serializedCompact.length}`);
+            this.sql`INSERT OR REPLACE INTO compact_conversations (id, messages) VALUES (${conversations.id}, ${serializedCompact})`;
+            this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${serializedFull})`;
         } catch (error) {
-            this.logger().error(`Failed to save conversation state ${conversations.id}, length: ${serialized.length}`, error, conversations.fullHistory);
+            this.logger().error(`Failed to save conversation state ${conversations.id}`, error);
         }
     }
 
     constructor(ctx: AgentContext, env: Env) {
         super(ctx, env);
         this.sql`CREATE TABLE IF NOT EXISTS full_conversations (id TEXT PRIMARY KEY, messages TEXT)`;
+        this.sql`CREATE TABLE IF NOT EXISTS compact_conversations (id TEXT PRIMARY KEY, messages TEXT)`;
     }
 
     async saveToDatabase() {

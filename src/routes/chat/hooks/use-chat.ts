@@ -17,7 +17,7 @@ import { logger } from '@/utils/logger';
 import { apiClient } from '@/lib/api-client';
 import { appEvents } from '@/lib/app-events';
 import { createWebSocketMessageHandler, type HandleMessageDeps } from '../utils/handle-websocket-message';
-import { isConversationalMessage, addOrUpdateMessage, createUserMessage, handleRateLimitError, type ChatMessage } from '../utils/message-helpers';
+import { isConversationalMessage, addOrUpdateMessage, createUserMessage, handleRateLimitError, createAIMessage, type ChatMessage } from '../utils/message-helpers';
 import { sendWebSocketMessage } from '../utils/websocket-helpers';
 import { initialStages as defaultStages, updateStage as updateStageHelper } from '../utils/project-stage-helpers';
 import type { ProjectStage } from '../utils/project-stage-helpers';
@@ -73,7 +73,7 @@ export function useChat({
 	const connectAttemptIdRef = useRef(0);
 	const [chatId, setChatId] = useState<string>();
 	const [messages, setMessages] = useState<ChatMessage[]>([
-		{ type: 'ai', id: 'main', message: 'Thinking...', isThinking: true },
+		createAIMessage('main', 'Thinking...', true),
 	]);
 
 	const [bootstrapFiles, setBootstrapFiles] = useState<FileType[]>([]);
@@ -139,10 +139,10 @@ export function useChat({
 	}, []);
 
 
-	const sendMessage = useCallback((message: Omit<ChatMessage, 'type'>) => {
+	const sendMessage = useCallback((message: ChatMessage) => {
 		// Only add conversational messages to the chat UI
-		if (!isConversationalMessage(message.id)) return;
-		setMessages(prev => addOrUpdateMessage(prev, message, 'ai'));
+		if (!isConversationalMessage(message.conversationId)) return;
+		setMessages((prev: ChatMessage[]) => addOrUpdateMessage(prev, message));
 	}, []);
 
 	const sendUserMessage = useCallback((message: string) => {
@@ -274,18 +274,17 @@ export function useChat({
 
 					// Send success message to user
 					if (isRetry) {
-						sendMessage({
-							id: 'websocket_reconnected',
-							message: '🔌 Connection restored! Continuing with code generation...',
-						});
+						sendMessage(createAIMessage('websocket_reconnected', '🔌 Connection restored! Continuing with code generation...'));
 					}
+
+					// Always request conversation state explicitly (running/full history)
+					sendWebSocketMessage(ws, 'get_conversation_state');
 
 					// Request file generation for new chats only
 					if (!disableGenerate && urlChatId === 'new') {
 						logger.debug('🔄 Starting code generation for new chat');
 						sendWebSocketMessage(ws, 'generate_all');
 					}
-					// For existing chats, auto-resume happens via cf_agent_state
 				});
 
 				ws.addEventListener('message', (event) => {
@@ -338,10 +337,7 @@ export function useChat({
 			
 			if (retryCount.current >= maxRetries) {
 				logger.error(`💥 WebSocket connection failed permanently after ${maxRetries + 1} attempts`);
-				sendMessage({
-					id: 'websocket_failed',
-					message: `🚨 Connection failed permanently after ${maxRetries + 1} attempts.\n\n❌ Reason: ${reason}\n\n🔄 Please refresh the page to try again.`,
-				});
+				sendMessage(createAIMessage('websocket_failed', `🚨 Connection failed permanently after ${maxRetries + 1} attempts.\n\n❌ Reason: ${reason}\n\n🔄 Please refresh the page to try again.`));
 				
 				// Debug logging for permanent failure
 				onDebugMessage?.('error',
@@ -361,11 +357,7 @@ export function useChat({
 
 			logger.warn(`🔄 Retrying WebSocket connection in ${actualDelay / 1000}s (attempt ${retryCount.current + 1}/${maxRetries + 1})`);
 			
-			sendMessage({
-				id: 'websocket_retrying',
-				message: `🔄 Connection failed. Retrying in ${Math.ceil(actualDelay / 1000)} seconds... (attempt ${retryCount.current + 1}/${maxRetries + 1})\n\n❌ Reason: ${reason}`,
-				isThinking: true,
-			});
+			sendMessage(createAIMessage('websocket_retrying', `🔄 Connection failed. Retrying in ${Math.ceil(actualDelay / 1000)} seconds... (attempt ${retryCount.current + 1}/${maxRetries + 1})\n\n❌ Reason: ${reason}`, true));
 
 			const timeoutId = setTimeout(() => {
 				connectWithRetry(wsUrl, { disableGenerate, isRetry: true });
@@ -422,21 +414,13 @@ export function useChat({
 					};
 
 					let startedBlueprintStream = false;
-					sendMessage({
-						id: 'main',
-						message: "Sure, let's get started. Bootstrapping the project first...",
-						isThinking: true,
-					});
+					sendMessage(createAIMessage('main', "Sure, let's get started. Bootstrapping the project first...", true));
 
 					for await (const obj of ndjsonStream(response.stream)) {
                         logger.debug('Received chunk from server:', obj);
 						if (obj.chunk) {
 							if (!startedBlueprintStream) {
-								sendMessage({
-									id: 'main',
-									message: 'Blueprint is being generated...',
-									isThinking: true,
-								});
+								sendMessage(createAIMessage('main', 'Blueprint is being generated...', true));
 								logger.info('Blueprint stream has started');
 								setIsBootstrapping(false);
 								setIsGeneratingBlueprint(true);
@@ -470,12 +454,7 @@ export function useChat({
 
 					updateStage('blueprint', { status: 'completed' });
 					setIsGeneratingBlueprint(false);
-					sendMessage({
-						id: 'main',
-						message:
-							'Blueprint generation complete. Now starting the code generation...',
-						isThinking: true,
-					});
+					sendMessage(createAIMessage('main', 'Blueprint generation complete. Now starting the code generation...', true));
 
 					// Connect to WebSocket
 					logger.debug('connecting to ws with created id');
@@ -490,11 +469,7 @@ export function useChat({
 				} else if (connectionStatus.current === 'idle') {
 					setIsBootstrapping(false);
 					// Get existing progress
-					sendMessage({
-						id: 'fetching-chat',
-						message: 'Fetching your previous chat...',
-						isThinking: false,
-					});
+					sendMessage(createAIMessage('fetching-chat', 'Fetching your previous chat...'));
 
 					// Fetch existing agent connection details
 					const response = await apiClient.connectToAgent(urlChatId);
@@ -507,11 +482,7 @@ export function useChat({
 					// Set the chatId for existing chat - this enables the chat input
 					setChatId(urlChatId);
 
-					sendMessage({
-						id: 'resuming-chat',
-						message: 'Starting from where you left off...',
-						isThinking: false,
-					});
+					sendMessage(createAIMessage('resuming-chat', 'Starting from where you left off...'));
 
 					logger.debug('connecting from init for existing chatId');
 					connectWithRetry(response.data.websocketUrl, {
@@ -591,10 +562,7 @@ export function useChat({
 						setIsRedeployReady(false);
 						
 						// Show timeout message
-						sendMessage({
-							id: 'deployment_timeout',
-							message: `⏰ Deployment timed out after 1 minute.\n\n🔄 Please try deploying again. The server may be busy.`,
-						});
+						sendMessage(createAIMessage('deployment_timeout', `⏰ Deployment timed out after 1 minute.\n\n🔄 Please try deploying again. The server may be busy.`));
 						
 						// Debug logging for timeout
 						onDebugMessage?.('warning', 
@@ -622,10 +590,7 @@ export function useChat({
 			setCloudflareDeploymentUrl('');
 			setIsRedeployReady(false);
 			
-			sendMessage({
-				id: 'deployment_error',
-				message: `❌ Failed to initiate deployment: ${error instanceof Error ? error.message : 'Unknown error'}\n\n🔄 You can try again.`,
-			});
+			sendMessage(createAIMessage('deployment_error', `❌ Failed to initiate deployment: ${error instanceof Error ? error.message : 'Unknown error'}\n\n🔄 You can try again.`));
 		}
 	}, [websocket, sendMessage, isDeploying, onDebugMessage]);
 

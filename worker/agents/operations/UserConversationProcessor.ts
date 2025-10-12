@@ -8,7 +8,7 @@ import { AgentOperation, OperationOptions, getSystemPromptWithProjectContext } f
 import { ConversationMessage } from "../inferutils/common";
 import { StructuredLogger } from "../../logger";
 import { IdGenerator } from '../utils/idGenerator';
-import { MAX_LLM_MESSAGES } from '../constants';
+// import { MAX_LLM_MESSAGES } from '../constants';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
 import { buildTools } from "../tools/customTools";
 import { PROMPT_UTILS } from "../prompts";
@@ -23,7 +23,7 @@ const CHUNK_SIZE = 64;
 
 // Compactification thresholds
 const COMPACTIFICATION_CONFIG = {
-    MAX_TURNS: MAX_LLM_MESSAGES,            // Trigger after 50 conversation turns
+    MAX_TURNS: 40,            // Trigger after 50 conversation turns
     MAX_ESTIMATED_TOKENS: 100000,
     PRESERVE_RECENT_MESSAGES: 10, // Always keep last 10 messages uncompacted
     CHARS_PER_TOKEN: 4,         // Rough estimation: 1 token ≈ 4 characters
