@@ -7,6 +7,7 @@ import { Message } from '../inferutils/common';
 import { AgentOperation, getSystemPromptWithProjectContext, OperationOptions } from '../operations/common';
 import { AGENT_CONFIG } from '../inferutils/config';
 import type { UserContext } from '../core/types';
+import { imagesToBase64 } from 'worker/utils/images';
 
 export interface PhaseGenerationInputs {
     issues: IssueReport;
@@ -199,7 +200,7 @@ export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInpu
             const userMessage = userContext?.images && userContext.images.length > 0
                 ? createMultiModalUserMessage(
                     userPrompt,
-                    userContext.images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                    await imagesToBase64(env, userContext?.images),
                     'high'
                 )
                 : createUserMessage(userPrompt);

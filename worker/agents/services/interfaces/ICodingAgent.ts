@@ -1,7 +1,7 @@
 import { FileOutputType } from "worker/agents/schemas";
 import { BaseSandboxService } from "worker/services/sandbox/BaseSandboxService";
 import { PreviewType } from "worker/services/sandbox/sandboxTypes";
-import { ImageAttachment } from "worker/types/image-attachment";
+import { ProcessedImageAttachment } from "worker/types/image-attachment";
 
 export abstract class ICodingAgent {
     abstract getSandboxServiceClient(): BaseSandboxService;
@@ -12,5 +12,5 @@ export abstract class ICodingAgent {
 
     abstract getLogs(reset?: boolean): Promise<string>;
 
-    abstract queueUserRequest(request: string, images?: ImageAttachment[]): void;
+    abstract queueUserRequest(request: string, images?: ProcessedImageAttachment[]): void;
 }

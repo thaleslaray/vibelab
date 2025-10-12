@@ -59,6 +59,8 @@ export const WebSocketMessageResponses: Record<string, WebSocketMessageType> = {
     // Conversational AI messages
     USER_SUGGESTIONS_PROCESSING: 'user_suggestions_processing',
     CONVERSATION_RESPONSE: 'conversation_response',
+    CONVERSATION_CLEARED: 'conversation_cleared',
+    CONVERSATION_STATE: 'conversation_state',
     
     // Model configuration info
     MODEL_CONFIGS_INFO: 'model_configs_info',
@@ -88,6 +90,8 @@ export const WebSocketMessageRequests = {
     
     // Conversational AI requests
     USER_SUGGESTION: 'user_suggestion',
+    CLEAR_CONVERSATION: 'clear_conversation',
+    GET_CONVERSATION_STATE: 'get_conversation_state',
     
     // Model configuration info request
     GET_MODEL_CONFIGS: 'get_model_configs',
@@ -98,5 +102,5 @@ export const WebSocketMessageRequests = {
 
 export const PREVIEW_EXPIRED_ERROR = 'Preview expired, attempting redeploy. Please try again after a minute or refresh the page';
 export const MAX_DEPLOYMENT_RETRIES = 5;
-export const MAX_LLM_MESSAGES = 100;
+export const MAX_LLM_MESSAGES = 200;
 export const MAX_TOOL_CALLING_DEPTH = 7;

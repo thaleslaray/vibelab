@@ -27,6 +27,7 @@ declare namespace Cloudflare {
 		GITHUB_CLIENT_ID: string;
 		GITHUB_CLIENT_SECRET: string;
 		JWT_SECRET: string;
+        AI_PROXY_JWT_SECRET: string;
 		ENTROPY_KEY: string;
 		ENVIRONMENT: string;
         USE_TUNNEL_FOR_PREVIEW: boolean;
@@ -50,7 +51,7 @@ declare namespace Cloudflare {
 		API_RATE_LIMITER: RateLimit;
 		AUTH_RATE_LIMITER: RateLimit;
 		AI: Ai;
-		IMAGES: ImagesBinding;
+		USE_CLOUDFLARE_IMAGES: boolean;
 		CF_VERSION_METADATA: WorkerVersionMetadata;
 		ASSETS: Fetcher;
 	}

@@ -211,6 +211,19 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                     sendError(connection, `Error fetching model configurations: ${error instanceof Error ? error.message : String(error)}`);
                 });
                 break;
+            case WebSocketMessageRequests.CLEAR_CONVERSATION:
+                logger.info('Clearing conversation history');
+                agent.clearConversation();
+                break;
+            case WebSocketMessageRequests.GET_CONVERSATION_STATE:
+                try {
+                    const state = agent.getConversationState();
+                    sendToConnection(connection, WebSocketMessageResponses.CONVERSATION_STATE, { state });
+                } catch (error) {
+                    logger.error('Error fetching conversation state:', error);
+                    sendError(connection, `Error fetching conversation state: ${error instanceof Error ? error.message : String(error)}`);
+                }
+                break;
             // Disabled it for now
             // case WebSocketMessageRequests.TERMINAL_COMMAND:
             //     // Handle terminal command execution

@@ -7,6 +7,9 @@ import { createApp } from './app';
 // import { sentryOptions } from './observability/sentry';
 import { DORateLimitStore as BaseDORateLimitStore } from './services/rate-limit/DORateLimitStore';
 import { getPreviewDomain } from './utils/urls';
+import { proxyToAiGateway } from './services/aigateway-proxy/controller';
+import { isOriginAllowed } from './config/security';
+
 // Durable Object and Service exports
 export { UserAppSandboxService, DeployerService } from './services/sandbox/sandboxSdkClient';
 
@@ -19,13 +22,9 @@ export const DORateLimitStore = BaseDORateLimitStore;
 const logger = createLogger('App');
 
 function setOriginControl(env: Env, request: Request, currentHeaders: Headers): Headers {
-    const previewDomain = env.CUSTOM_DOMAIN
     const origin = request.headers.get('Origin');
-
-    const allowedOrigin = `https://${previewDomain}`;
-    if (origin === allowedOrigin) {
-        currentHeaders.set('Access-Control-Allow-Origin', allowedOrigin);
-    } else if (origin?.startsWith('http://localhost')) {
+    
+    if (origin && isOriginAllowed(env, origin)) {
         currentHeaders.set('Access-Control-Allow-Origin', origin);
     }
     return currentHeaders;
@@ -111,13 +110,13 @@ async function handleUserAppRequest(request: Request, env: Env): Promise<Respons
  */
 const worker = {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-        console.log(`Received request: ${request.method} ${request.url}`);
+        logger.info(`Received request: ${request.method} ${request.url}`);
 		// --- Pre-flight Checks ---
 
 		// 1. Critical configuration check: Ensure custom domain is set.
         const previewDomain = getPreviewDomain(env);
 		if (!previewDomain || previewDomain.trim() === '') {
-			console.error('FATAL: env.CUSTOM_DOMAIN is not configured in wrangler.toml or the Cloudflare dashboard.');
+			logger.error('FATAL: env.CUSTOM_DOMAIN is not configured in wrangler.toml or the Cloudflare dashboard.');
 			return new Response('Server configuration error: Application domain is not set.', { status: 500 });
 		}
 
@@ -144,6 +143,21 @@ const worker = {
 			// Serve static assets for all non-API routes from the ASSETS binding.
 			if (!pathname.startsWith('/api/')) {
 				return env.ASSETS.fetch(request);
+			}
+			// AI Gateway proxy for generated apps
+			if (pathname.startsWith('/api/proxy/openai')) {
+                // Only handle requests from valid origins of the preview domain
+                const origin = request.headers.get('Origin');
+                const previewDomain = getPreviewDomain(env);
+
+                logger.info(`Origin: ${origin}, Preview Domain: ${previewDomain}`);
+                
+                return proxyToAiGateway(request, env, ctx);
+				// if (origin && origin.endsWith(`.${previewDomain}`)) {
+                //     return proxyToAiGateway(request, env, ctx);
+                // }
+                // logger.warn(`Access denied. Invalid origin: ${origin}, preview domain: ${previewDomain}`);
+                // return new Response('Access denied. Invalid origin.', { status: 403 });
 			}
 			// Handle all API requests with the main Hono application.
 			logger.info(`Handling API request for: ${url}`);

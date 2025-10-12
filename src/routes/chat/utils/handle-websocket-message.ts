@@ -1,9 +1,8 @@
 import type { WebSocket } from 'partysocket';
-import type { WebSocketMessage, BlueprintType } from '@/api-types';
+import type { WebSocketMessage, BlueprintType, ConversationMessage } from '@/api-types';
 import { logger } from '@/utils/logger';
 import { getFileType } from '@/utils/string';
 import { getPreviewUrl } from '@/lib/utils';
-import { generateId } from '@/utils/id-generator';
 import {
     setFileGenerating,
     appendFileChunk,
@@ -16,6 +15,7 @@ import {
     handleRateLimitError,
     handleStreamingMessage,
     appendToolEvent,
+    type ChatMessage,
 } from './message-helpers';
 import { completeStages } from './project-stage-helpers';
 import { sendWebSocketMessage } from './websocket-helpers';
@@ -27,7 +27,7 @@ export interface HandleMessageDeps {
     setFiles: React.Dispatch<React.SetStateAction<FileType[]>>;
     setPhaseTimeline: React.Dispatch<React.SetStateAction<PhaseTimelineItem[]>>;
     setProjectStages: React.Dispatch<React.SetStateAction<any[]>>;
-    setMessages: React.Dispatch<React.SetStateAction<any[]>>;
+    setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
     setBlueprint: React.Dispatch<React.SetStateAction<BlueprintType | undefined>>;
     setQuery: React.Dispatch<React.SetStateAction<string | undefined>>;
     setPreviewUrl: React.Dispatch<React.SetStateAction<string | undefined>>;
@@ -58,7 +58,7 @@ export interface HandleMessageDeps {
     
     // Functions
     updateStage: (stageId: string, updates: any) => void;
-    sendMessage: (message: any) => void;
+    sendMessage: (message: ConversationMessage) => void;
     loadBootstrapFiles: (files: FileType[]) => void;
     onDebugMessage?: (
         type: 'error' | 'warning' | 'info' | 'websocket',
@@ -78,6 +78,17 @@ export interface HandleMessageDeps {
 }
 
 export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
+    const extractTextContent = (content: ConversationMessage['content']): string => {
+        if (!content) return '';
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+            return content
+                .map(c => (c && 'type' in c && c.type === 'text') ? c.text : '')
+                .join(' ')
+                .trim();
+        }
+        return '';
+    };
     return (websocket: WebSocket, message: WebSocketMessage) => {
         const {
             setFiles,
@@ -182,36 +193,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         }));
                         setPhaseTimeline(timeline);
                     }
-
-                    if (state.conversationMessages && state.conversationMessages.length > 0) {
-                        logger.debug('💬 Restoring conversation messages:', state.conversationMessages.length);
-                        const restoredMessages = state.conversationMessages
-                            .map((msg: any) => {
-                                const role = String(msg.role || '').toLowerCase();
-                                const content: string = String(msg.content ?? '');
-
-                                // Map only recognized roles; ignore system/tool/other roles
-                                let type: 'user' | 'ai' | null = null;
-                                if (role === 'user' || role === 'human') type = 'user';
-                                else if (role === 'assistant' || role === 'ai' || role === 'model') type = 'ai';
-
-                                if (!type) return null;
-                                if (content.includes('<Internal Memo>')) return null;
-
-                                return {
-                                    type,
-                                    id: (msg.conversationId || msg.id || generateId()),
-                                    message: content,
-                                    isThinking: false,
-                                } as const;
-                            })
-                            .filter(Boolean) as Array<{ type: 'user' | 'ai'; id: string; message: string; isThinking: boolean }>;
-
-                        if (restoredMessages.length > 0) {
-                            logger.debug('💬 Replacing messages with restored conversation:', restoredMessages.length);
-                            setMessages(restoredMessages);
-                        }
-                    }
                     
                     updateStage('bootstrap', { status: 'completed' });
                     
@@ -255,6 +236,34 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 }
 
                 logger.debug('✅ Agent state update processed');
+                break;
+            }
+
+            case 'conversation_state': {
+                const { state } = message;
+                const history: ReadonlyArray<ConversationMessage> = state?.runningHistory ?? [];
+                logger.debug('Received conversation_state with messages:', history.length);
+
+                const restoredMessages: ChatMessage[] = history.reduce<ChatMessage[]>((acc, msg) => {
+                    if (msg.role !== 'user' && msg.role !== 'assistant') return acc;
+                    const text = extractTextContent(msg.content);
+                    if (!text || text.includes('<Internal Memo>')) return acc;
+
+                    const convId = msg.conversationId;
+                    const isArchive = msg.role === 'assistant' && convId.startsWith('archive-');
+
+                    acc.push({
+                        role: msg.role,
+                        conversationId: convId,
+                        content: isArchive ? 'previous history was compacted' : text,
+                    });
+                    return acc;
+                }, []);
+
+                if (restoredMessages.length > 0) {
+                    logger.debug('Replacing messages with conversation_state history:', restoredMessages.length);
+                    setMessages(restoredMessages);
+                }
                 break;
             }
 
@@ -308,11 +317,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 setFiles((prev) => setAllFilesCompleted(prev));
                 setProjectStages((prev) => completeStages(prev, ['code', 'validate', 'fix']));
 
-                sendMessage({
-                    id: 'generation-complete',
-                    message: 'Code generation has been completed.',
-                    isThinking: false,
-                });
+                sendMessage(createAIMessage('generation-complete', 'Code generation has been completed.'));
                 setIsPhaseProgressActive(false);
                 break;
             }
@@ -346,10 +351,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     reviewMessage = 'Code review complete - no issues found';
                 }
                 
-                sendMessage({
-                    id: 'code_review',
-                    message: reviewMessage,
-                });
+                sendMessage(createAIMessage('code_reviewed', reviewMessage));
                 break;
             }
 
@@ -394,30 +396,21 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'phase_generating': {
                 updateStage('validate', { status: 'completed' });
                 updateStage('fix', { status: 'completed' });
-                sendMessage({
-                    id: 'phase_generating',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('phase_generating', message.message));
                 setIsThinking(true);
                 setIsPhaseProgressActive(true);
                 break;
             }
 
             case 'phase_generated': {
-                sendMessage({
-                    id: 'phase_generated',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('phase_generated', message.message));
                 setIsThinking(false);
                 setIsPhaseProgressActive(false);
                 break;
             }
 
             case 'phase_implementing': {
-                sendMessage({
-                    id: 'phase_implementing',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('phase_implementing', message.message));
                 updateStage('code', { status: 'active' });
                 
                 if (message.phase) {
@@ -449,10 +442,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'phase_validating': {
-                sendMessage({
-                    id: 'phase_validating',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('phase_validating', message.message));
                 updateStage('validate', { status: 'active' });
                 
                 setPhaseTimeline(prev => {
@@ -470,19 +460,13 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'phase_validated': {
-                sendMessage({
-                    id: 'phase_validated',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('phase_validated', message.message));
                 updateStage('validate', { status: 'completed' });
                 break;
             }
 
             case 'phase_implemented': {
-                sendMessage({
-                    id: 'phase_implemented',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('phase_implemented', message.message));
 
                 updateStage('code', { status: 'completed' });
                 setIsRedeployReady(true);
@@ -522,29 +506,20 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'generation_stopped': {
                 setIsGenerating(false);
                 setIsGenerationPaused(true);
-                sendMessage({
-                    id: 'generation_stopped',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('generation_stopped', message.message));
                 break;
             }
 
             case 'generation_resumed': {
                 setIsGenerating(true);
                 setIsGenerationPaused(false);
-                sendMessage({
-                    id: 'generation_resumed',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('generation_resumed', message.message));
                 break;
             }
 
             case 'cloudflare_deployment_started': {
                 setIsDeploying(true);
-                sendMessage({
-                    id: 'cloudflare_deployment_started',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('cloudflare_deployment_started', message.message));
                 break;
             }
 
@@ -554,10 +529,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 setDeploymentError('');
                 setIsRedeployReady(false);
                 
-                sendMessage({
-                    id: 'cloudflare_deployment_completed',
-                    message: `Your project has been permanently deployed to Cloudflare Workers: ${message.deploymentUrl}`,
-                });
+                sendMessage(createAIMessage('cloudflare_deployment_completed', `Your project has been permanently deployed to Cloudflare Workers: ${message.deploymentUrl}`));
                 
                 onDebugMessage?.('info', 
                     'Deployment Completed - Redeploy Reset',
@@ -573,10 +545,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 setCloudflareDeploymentUrl('');
                 setIsRedeployReady(true);
                 
-                sendMessage({
-                    id: 'cloudflare_deployment_error',
-                    message: `❌ Deployment failed: ${message.error}\n\n🔄 You can try deploying again.`,
-                });
+                sendMessage(createAIMessage('cloudflare_deployment_error', `❌ Deployment failed: ${message.error}\n\n🔄 You can try deploying again.`));
 
                 toast.error(`Error: ${message.error}`);
                 
@@ -589,34 +558,22 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'github_export_started': {
-                sendMessage({
-                    id: 'github_export_started',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('github_export_started', message.message));
                 break;
             }
 
             case 'github_export_progress': {
-                sendMessage({
-                    id: 'github_export_progress',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('github_export_progress', message.message));
                 break;
             }
 
             case 'github_export_completed': {
-                sendMessage({
-                    id: 'github_export_completed',
-                    message: message.message,
-                });
+                sendMessage(createAIMessage('github_export_completed', message.message));
                 break;
             }
 
             case 'github_export_error': {
-                sendMessage({
-                    id: 'github_export_error',
-                    message: `❌ GitHub export failed: ${message.error}`,
-                });
+                sendMessage(createAIMessage('github_export_error', `❌ GitHub export failed: ${message.error}`));
 
                 toast.error(`Error: ${message.error}`);
                 
@@ -624,37 +581,40 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'conversation_response': {
-                // Use concrete conversationId when available; otherwise use placeholder
-                let id = message.conversationId ?? 'conversation_response';
+                // Use concrete conversationId when available; otherwise use placeholder id
+                let conversationId = message.conversationId ?? 'conversation_response';
 
-                // If a concrete id arrives later, rename placeholder once
+                // If a concrete id arrives later, update placeholder once
                 if (message.conversationId) {
                     const convId = message.conversationId;
                     setMessages(prev => {
-                        const genericIdx = prev.findIndex(m => m.type === 'ai' && m.id === 'conversation_response');
+                        const genericIdx = prev.findIndex(m => m.role === 'assistant' && m.conversationId === 'conversation_response');
                         if (genericIdx !== -1) {
-                            return prev.map((m, i) => i === genericIdx ? { ...m, id: convId } : m);
+                            return prev.map((m, i) => i === genericIdx ? { ...m, conversationId: convId } : m);
                         }
                         return prev;
                     });
-                    id = convId;
+                    conversationId = convId;
                 }
+
+                const isArchive = conversationId.startsWith('archive-');
+                const placeholder = 'previous history was compacted';
 
                 if (message.tool) {
                     const tool = message.tool;
-                    setMessages(prev => appendToolEvent(prev, id, { name: tool.name, status: tool.status }));
+                    setMessages(prev => appendToolEvent(prev, conversationId, { name: tool.name, status: tool.status }));
                     break;
                 }
 
                 if (message.isStreaming) {
-                    setMessages(prev => handleStreamingMessage(prev, id, message.message, false));
+                    setMessages(prev => handleStreamingMessage(prev, conversationId, isArchive ? placeholder : message.message, false));
                     break;
                 }
 
                 setMessages(prev => {
-                    const idx = prev.findIndex(m => m.type === 'ai' && m.id === id);
-                    if (idx !== -1) return prev.map((m, i) => i === idx ? { ...m, message: message.message } : m);
-                    return [...prev, createAIMessage(id, message.message)];
+                    const idx = prev.findIndex(m => m.role === 'assistant' && m.conversationId === conversationId);
+                    if (idx !== -1) return prev.map((m, i) => i === idx ? { ...m, content: (isArchive ? placeholder : message.message) } : m);
+                    return [...prev, createAIMessage(conversationId, isArchive ? placeholder : message.message)];
                 });
                 break;
             }

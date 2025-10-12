@@ -1,4 +1,4 @@
-import { Agent, Connection } from 'agents';
+import { Agent, AgentContext, Connection } from 'agents';
 import { 
     Blueprint, 
     PhaseConceptGenerationSchemaType, 
@@ -41,9 +41,12 @@ import { prepareCloudflareButton } from '../../utils/deployToCf';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
 import { generateId } from 'worker/utils/idGenerator';
-import type { ImageAttachment } from '../../types/image-attachment';
+import { ImageAttachment, type ProcessedImageAttachment } from '../../types/image-attachment';
 import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
+import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aigateway-proxy/controller';
+import { ImageType, uploadImage } from 'worker/utils/images';
+import { ConversationMessage, ConversationState } from '../inferutils/common';
 
 interface WebhookPayload {
     event: {
@@ -78,6 +81,8 @@ interface Operations {
     processUserMessage: UserConversationProcessor;
 }
 
+const DEFAULT_CONVERSATION_SESSION_ID = 'default';
+
 /**
  * SimpleCodeGeneratorAgent - Deterministically orhestrated agent
  * 
@@ -99,7 +104,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     
     // In-memory storage for user-uploaded images (not persisted in DO state)
     // These are temporary and will be lost if the DO is evicted
-    private pendingUserImages: ImageAttachment[] = [];
+    private pendingUserImages: ProcessedImageAttachment[] = []
     
     protected operations: Operations = {
         codeReview: new CodeReviewOperation(),
@@ -154,10 +159,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         commandsHistory: [],
         lastPackageJson: '',
         clientReportedErrors: [],
-        // latestScreenshot: undefined,
         pendingUserInputs: [],
         inferenceContext: {} as InferenceContext,
-        // conversationalAssistant: new ConversationalAssistant(this.env),
         sessionId: '',
         hostname: '',
         conversationMessages: [],
@@ -168,6 +171,65 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         reviewingInitiated: false,
         projectUpdatesAccumulator: [],
     };
+
+    /*
+    * Each DO has 10 gb of sqlite storage. However, the way agents sdk works, it stores the 'state' object of the agent as a single row
+    * in the cf_agents_state table. And row size has a much smaller limit in sqlite. Thus, we only keep current compactified conversation
+    * in the agent's core state and store the full conversation in a separate DO table.
+    */
+    getConversationState(id: string = DEFAULT_CONVERSATION_SESSION_ID): ConversationState {
+        const currentConversation = this.state.conversationMessages;
+        const rows = this.sql<{ messages: string, id: string }>`SELECT * FROM full_conversations WHERE id = ${id}`;
+        let fullHistory: ConversationMessage[] = [];
+        if (rows.length > 0 && rows[0].messages) {
+            try {
+                const parsed = JSON.parse(rows[0].messages);
+                if (Array.isArray(parsed)) {
+                    fullHistory = parsed as ConversationMessage[];
+                }
+            } catch (_e) {}
+        }
+        if (fullHistory.length === 0) {
+            fullHistory = currentConversation;
+        }
+        // Load compact (running) history from sqlite with fallback to in-memory state for migration
+        const compactRows = this.sql<{ messages: string, id: string }>`SELECT * FROM compact_conversations WHERE id = ${id}`;
+        let runningHistory: ConversationMessage[] = [];
+        if (compactRows.length > 0 && compactRows[0].messages) {
+            try {
+                const parsed = JSON.parse(compactRows[0].messages);
+                if (Array.isArray(parsed)) {
+                    runningHistory = parsed as ConversationMessage[];
+                }
+            } catch (_e) {}
+        }
+        if (runningHistory.length === 0) {
+            runningHistory = currentConversation;
+        }
+        return {
+            id: id,
+            runningHistory,
+            fullHistory,
+        };
+    }
+
+    setConversationState(conversations: ConversationState) {
+        const serializedFull = JSON.stringify(conversations.fullHistory);
+        const serializedCompact = JSON.stringify(conversations.runningHistory);
+        try {
+            this.logger().info(`Saving conversation state ${conversations.id}, full_length: ${serializedFull.length}, compact_length: ${serializedCompact.length}`);
+            this.sql`INSERT OR REPLACE INTO compact_conversations (id, messages) VALUES (${conversations.id}, ${serializedCompact})`;
+            this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${serializedFull})`;
+        } catch (error) {
+            this.logger().error(`Failed to save conversation state ${conversations.id}`, error);
+        }
+    }
+
+    constructor(ctx: AgentContext, env: Env) {
+        super(ctx, env);
+        this.sql`CREATE TABLE IF NOT EXISTS full_conversations (id TEXT PRIMARY KEY, messages TEXT)`;
+        this.sql`CREATE TABLE IF NOT EXISTS compact_conversations (id TEXT PRIMARY KEY, messages TEXT)`;
+    }
 
     async saveToDatabase() {
         this.logger().info(`Blueprint generated successfully for agent ${this.getAgentId()}`);
@@ -332,7 +394,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     getSandboxServiceClient(): BaseSandboxService {
         if (this.sandboxServiceClient === undefined) {
             this.logger().info('Initializing sandbox service client');
-            this.sandboxServiceClient = getSandboxService(this.getSessionId());
+            this.sandboxServiceClient = getSandboxService(this.getSessionId(), this.getAgentId());
         }
         return this.sandboxServiceClient;
     }
@@ -399,7 +461,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info('README.md generated successfully');
     }
 
-    async queueUserRequest(request: string, images?: ImageAttachment[]): Promise<void> {
+    async queueUserRequest(request: string, images?: ProcessedImageAttachment[]): Promise<void> {
         this.rechargePhasesCounter(3);
         this.setState({
             ...this.state,
@@ -408,7 +470,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         if (images && images.length > 0) {
             this.logger().info('Storing user images in-memory for phase generation', {
                 imageCount: images.length,
-                filenames: images.map(img => img.filename)
             });
             this.pendingUserImages = [...this.pendingUserImages, ...images];
         }
@@ -1649,8 +1710,17 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         
         // Generate webhook URL for this agent instance
         const webhookUrl = this.generateWebhookUrl();
+
+        // If AI template is configured, pass AI vars
+        let localEnvVars: Record<string, string> = {};
+        if (this.state.templateDetails.name.includes('agents')) {
+            localEnvVars = {
+                "CF_AI_BASE_URL": generateAppProxyUrl(this.env),
+                "CF_AI_API_KEY": await generateAppProxyToken(this.state.inferenceContext.agentId, this.state.inferenceContext.userId, this.env)
+            }
+        }
         
-        const createResponse = await this.getSandboxServiceClient().createInstance(templateName, `v1-${projectName}`, webhookUrl);
+        const createResponse = await this.getSandboxServiceClient().createInstance(templateName, `v1-${projectName}`, webhookUrl, localEnvVars);
         if (!createResponse || !createResponse.success || !createResponse.runId) {
             throw new Error(`Failed to create sandbox instance: ${createResponse?.error || 'Unknown error'}`);
         }
@@ -2290,9 +2360,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 step: 'uploading_files',
                 progress: 30
             });
-
+            
+            const allFiles = this.fileManager.getGeneratedFiles();
             // Use consolidated export method that handles the complete flow
-            const exportResult = await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options);
+            const exportResult = await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options, allFiles);
 
             if (!exportResult?.success) {
                 throw new Error(`Failed to export to GitHub repository: ${exportResult?.error}`);
@@ -2309,7 +2380,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     this.fileManager.saveGeneratedFile(readmeFile);
                     await this.deployToSandbox([readmeFile], false, "feat: README updated with cloudflare deploy button");
                     // Export again
-                    await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options);
+                    await this.getSandboxServiceClient().pushToGitHub(this.state.sandboxInstanceId!, options, allFiles);
                     this.logger().info('Readme committed successfully');
                 } catch (error) {
                     this.logger().error('Failed to commit readme', error);
@@ -2371,11 +2442,21 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             const projectUpdates = await this.getAndResetProjectUpdates();
             this.logger().info('Passing context to user conversation processor', { errors, projectUpdates });
 
+            // If there are images, upload them and pass the URLs to the conversation processor
+            let uploadedImages: ProcessedImageAttachment[] = [];
+            if (images) {
+                uploadedImages = await Promise.all(images.map(async (image) => {
+                    return await uploadImage(this.env, image, ImageType.UPLOADS);
+                }));
+
+                this.logger().info('Uploaded images', { uploadedImages });
+            }
+
             // Process the user message using conversational assistant
             const conversationalResponse = await this.operations.processUserMessage.execute(
                 { 
                     userMessage, 
-                    pastMessages: this.state.conversationMessages,
+                    conversationState: this.getConversationState(),
                     conversationResponseCallback: (
                         message: string,
                         conversationId: string,
@@ -2391,16 +2472,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     },
                     errors,
                     projectUpdates,
-                    images
+                    images: uploadedImages
                 }, 
                 this.getOperationOptions()
             );
 
-            const { conversationResponse, messages } = conversationalResponse;
-            this.setState({
-                ...this.state,
-                conversationMessages: messages
-            });
+            const { conversationResponse, conversationState } = conversationalResponse;
+            this.setConversationState(conversationState);
 
              if (!this.isGenerating) {
                 // If idle, start generation process
@@ -2429,80 +2507,23 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
-    // ===============================
-    // Screenshot storage helpers
-    // ===============================
-    
-    private base64ToUint8Array(base64: string): Uint8Array {
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
-    }
-
-    private async uploadScreenshotToCloudflareImages(base64: string, filename: string): Promise<string> {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${this.env.CLOUDFLARE_ACCOUNT_ID}/images/v1`;
-        const bytes = this.base64ToUint8Array(base64);
-        const blob = new Blob([bytes], { type: 'image/png' });
-        const form = new FormData();
-        form.append('file', blob, filename);
-
-        // Type guard for Images binding
-        type ImagesBinding = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
-        const maybeImages = (this.env as unknown as { [key: string]: unknown })['IMAGES'];
-        const imagesBinding: ImagesBinding | null = (
-            typeof maybeImages === 'object' && maybeImages !== null &&
-            'fetch' in (maybeImages as Record<string, unknown>) && 
-            typeof (maybeImages as { fetch?: unknown }).fetch === 'function'
-        ) ? (maybeImages as ImagesBinding) : null;
-
-        let resp: Response;
-        if (imagesBinding) {
-            // Use Images service binding when available (no explicit token needed)
-            resp = await imagesBinding.fetch(url, { method: 'POST', body: form });
-        } else if (this.env.CLOUDFLARE_API_TOKEN) {
-            // Fallback to direct API with token
-            resp = await fetch(url, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${this.env.CLOUDFLARE_API_TOKEN}` },
-                body: form,
-            });
-        } else {
-            throw new Error('Cloudflare Images not available: missing IMAGES binding and CLOUDFLARE_API_TOKEN');
-        }
-
-        const json = await resp.json() as {
-            success: boolean;
-            result?: { id: string; variants?: string[] };
-            errors?: Array<{ message?: string }>;
-        };
-
-        if (!resp.ok || !json.success || !json.result) {
-            const errMsg = json.errors?.map(e => e.message).join('; ') || `status ${resp.status}`;
-            throw new Error(`Cloudflare Images upload failed: ${errMsg}`);
-        }
-
-        const variants = json.result.variants || [];
-        if (variants.length > 0) {
-            // Prefer first variant URL
-            return variants[0];
-        }
-        throw new Error('Cloudflare Images upload succeeded without variants');
-    }
-
-    private async uploadScreenshotToR2(base64: string, key: string): Promise<string> {
-        const bytes = this.base64ToUint8Array(base64);
-        await this.env.TEMPLATES_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } });
-
-        // Build a public URL served via Worker route
-        const fileName = key.split('/').pop() as string;
-        const protocol = getProtocolForHost(this.state.hostname);
-        const base = `${protocol}://${this.env.CUSTOM_DOMAIN}`;
-        const agentId = this.state.inferenceContext.agentId;
-        const url = `${base}/api/screenshots/${encodeURIComponent(agentId)}/${encodeURIComponent(fileName)}`;
-        return url;
+    /**
+     * Clear conversation history
+     */
+    public clearConversation(): void {
+        const messageCount = this.state.conversationMessages.length;
+                        
+        // Clear conversation messages only from agent's running history
+        this.setState({
+            ...this.state,
+            conversationMessages: []
+        });
+                        
+        // Send confirmation response
+        this.broadcast(WebSocketMessageResponses.CONVERSATION_CLEARED, {
+            message: 'Conversation history cleared',
+            clearedMessageCount: messageCount
+        });
     }
 
     /**
@@ -2599,38 +2620,18 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             
             // Get base64 screenshot data
             const base64Screenshot = result.result.screenshot;
-
-            // Prefer Cloudflare Images → then R2 → fallback to data URL
-            const fileStamp = Date.now();
-            const fileBase = `${this.getAgentId()}-${fileStamp}`;
-            let publicUrl: string | null = null;
-
-            // 1) Try Cloudflare Images (REST API)
-            try {
-                publicUrl = await this.uploadScreenshotToCloudflareImages(base64Screenshot, `${fileBase}.png`);
-            } catch (imgErr) {
-                this.logger().warn('Cloudflare Images upload failed, will try R2 fallback', { error: imgErr instanceof Error ? imgErr.message : String(imgErr) });
-            }
-
-            // 2) Try R2 (serve via Worker route) if Images failed
-            if (!publicUrl) {
-                try {
-                    const r2Key = `screenshots/${this.getAgentId()}/${fileBase}.png`;
-                    publicUrl = await this.uploadScreenshotToR2(base64Screenshot, r2Key);
-                } catch (r2Err) {
-                    this.logger().warn('R2 upload fallback failed, will store as data URL', { error: r2Err instanceof Error ? r2Err.message : String(r2Err) });
-                }
-            }
-
-            // 3) Fallback: store data URL directly in DB
-            if (!publicUrl) {
-                publicUrl = `data:image/png;base64,${base64Screenshot}`;
-            }
+            const screenshot: ImageAttachment = {
+                id: this.getAgentId(),
+                filename: 'latest.png',
+                mimeType: 'image/png',
+                base64Data: base64Screenshot
+            };
+            const uploadedImage = await uploadImage(this.env, screenshot, ImageType.SCREENSHOTS);
 
             // Persist in database
             try {
                 const appService = new AppService(this.env);
-                await appService.updateAppScreenshot(this.getAgentId(), publicUrl);
+                await appService.updateAppScreenshot(this.getAgentId(), uploadedImage.publicUrl);
             } catch (dbError) {
                 const error = `Database update failed: ${dbError instanceof Error ? dbError.message : 'Unknown database error'}`;
                 this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
@@ -2645,7 +2646,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
             this.logger().info('Screenshot captured and stored successfully', { 
                 url, 
-                storage: publicUrl.startsWith('data:') ? 'database' : (publicUrl.includes('/api/screenshots/') ? 'r2' : 'images'),
+                storage: uploadedImage.publicUrl.startsWith('data:') ? 'database' : (uploadedImage.publicUrl.includes('/api/screenshots/') ? 'r2' : 'images'),
                 length: base64Screenshot.length
             });
 
@@ -2658,7 +2659,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 timestamp: new Date().toISOString()
             });
 
-            return publicUrl;
+            return uploadedImage.publicUrl;
             
         } catch (error) {
             this.logger().error('Failed to capture screenshot via REST API:', error);
