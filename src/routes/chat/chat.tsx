@@ -10,7 +10,7 @@ import { ArrowRight, Image as ImageIcon } from 'react-feather';
 import { useParams, useSearchParams, useNavigate } from 'react-router';
 import { MonacoEditor } from '../../components/monaco-editor/monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Expand, Github, LoaderCircle, RefreshCw } from 'lucide-react';
+import { Expand, Github, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw } from 'lucide-react';
 import { Blueprint } from './components/blueprint';
 import { FileExplorer } from './components/file-explorer';
 import { UserMessage, AIMessage } from './components/messages';
@@ -34,6 +34,10 @@ import { useImageUpload } from '@/hooks/use-image-upload';
 import { useDragDrop } from '@/hooks/use-drag-drop';
 import { ImageAttachmentPreview } from '@/components/image-attachment-preview';
 import { createAIMessage } from './utils/message-helpers';
+import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { sendWebSocketMessage } from './utils/websocket-helpers';
 
 export default function Chat() {
 	const { chatId: urlChatId } = useParams();
@@ -153,6 +157,8 @@ export default function Chat() {
 	const [debugMessages, setDebugMessages] = useState<DebugMessage[]>([]);
 	const deploymentControlsRef = useRef<HTMLDivElement>(null);
 
+	const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+
 	// Model config info state
 	const [modelConfigs, setModelConfigs] = useState<{
 		agents: Array<{ key: string; name: string; description: string; }>;
@@ -240,6 +246,12 @@ export default function Chat() {
 	const handleViewModeChange = useCallback((mode: 'preview' | 'editor' | 'blueprint') => {
 		setView(mode);
 	}, []);
+
+	const handleResetConversation = useCallback(() => {
+		if (!websocket) return;
+		sendWebSocketMessage(websocket, 'clear_conversation');
+		setIsResetDialogOpen(false);
+	}, [websocket]);
 
 	// // Terminal functions
 	// const handleTerminalCommand = useCallback((command: string) => {
@@ -519,11 +531,11 @@ export default function Chat() {
 								</div>
 							) : (
 								<>
-									{appTitle && (
-										<div className="text-lg font-semibold mb-2">
-											{appTitle}
-										</div>
-									)}
+									{(appTitle || chatId) && (
+								<div className="flex items-center justify-between mb-2">
+									<div className="text-lg font-semibold">{appTitle}</div>
+								</div>
+							)}
 									<UserMessage
 										message={query ?? displayQuery}
 									/>
@@ -543,11 +555,40 @@ export default function Chat() {
 							)}
 
 							{mainMessage && (
-								<AIMessage
-									message={mainMessage.content}
-									isThinking={mainMessage.ui?.isThinking}
-									toolEvents={mainMessage.ui?.toolEvents}
-								/>
+								<div className="relative">
+									<AIMessage
+										message={mainMessage.content}
+										isThinking={mainMessage.ui?.isThinking}
+										toolEvents={mainMessage.ui?.toolEvents}
+									/>
+									{chatId && (
+										<div className="absolute right-1 top-1">
+											<DropdownMenu>
+												<DropdownMenuTrigger asChild>
+													<Button
+														variant="ghost"
+														size="icon"
+														className="hover:bg-bg-3/80 cursor-pointer"
+													>
+														<MoreHorizontal className="h-4 w-4" />
+														<span className="sr-only">Chat actions</span>
+													</Button>
+												</DropdownMenuTrigger>
+												<DropdownMenuContent align="end" className="w-56">
+													<DropdownMenuItem
+															onClick={(e) => {
+																e.preventDefault();
+																setIsResetDialogOpen(true);
+															}}
+													>
+														<RotateCcw className="h-4 w-4 mr-2" />
+														Reset conversation
+													</DropdownMenuItem>
+												</DropdownMenuContent>
+											</DropdownMenu>
+										</div>
+									)}
+								</div>
 							)}
 
 							<PhaseTimeline
@@ -1087,6 +1128,23 @@ export default function Chat() {
 				onClear={clearDebugMessages}
 				chatSessionId={chatId}
 			/>
+
+			<AlertDialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+				<AlertDialogContent className="sm:max-w-[425px]">
+					<AlertDialogHeader>
+						<AlertDialogTitle>Reset conversation?</AlertDialogTitle>
+						<AlertDialogDescription>
+							This will clear the chat history for this app. Generated files and preview are not affected.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction onClick={handleResetConversation} className="bg-bg-2 hover:bg-bg-2/80 text-text-primary">
+							Reset
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 
 			{/* GitHub Export Modal */}
 			<GitHubExportModal

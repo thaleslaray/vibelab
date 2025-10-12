@@ -140,6 +140,14 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
         }
         
         switch (message.type) {
+            case 'conversation_cleared': {
+                // Reset chat messages to a subtle tool-event entry indicating success
+                setMessages(() => appendToolEvent([], 'conversation_cleared', {
+                    name: message.message || 'conversation reset',
+                    status: 'success'
+                }));
+                break;
+            }
             case 'cf_agent_state': {
                 const { state } = message;
                 logger.debug('🔄 Agent state update received:', state);
