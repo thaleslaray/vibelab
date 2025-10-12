@@ -100,3 +100,18 @@ export function createMultiModalUserMessage(
 		],
 	};
 }
+
+export async function mapImagesInMultiModalMessage(message: ConversationMessage, fn: (content: ImageContent) => Promise<ImageContent>) {
+    // Check if message is of type multi-modal
+    if (message.content && Array.isArray(message.content)) {
+        message.content = await Promise.all(message.content.map(c => {
+                if (c.type === 'image_url') {
+                    return fn(c);
+                }
+                return c;
+            })
+        )
+    }
+
+    return message;
+}

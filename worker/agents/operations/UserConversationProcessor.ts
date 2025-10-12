@@ -1,5 +1,5 @@
 import { ConversationalResponseType } from "../schemas";
-import { createAssistantMessage, createUserMessage, createMultiModalUserMessage, MessageRole } from "../inferutils/common";
+import { createAssistantMessage, createUserMessage, createMultiModalUserMessage, MessageRole, mapImagesInMultiModalMessage } from "../inferutils/common";
 import { executeInference } from "../inferutils/infer";
 import type { ChatCompletionMessageFunctionToolCall } from 'openai/resources';
 import { WebSocketMessageResponses } from "../constants";
@@ -15,13 +15,14 @@ import { PROMPT_UTILS } from "../prompts";
 import { RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { CodeSerializerType } from "../utils/codeSerializers";
 import { ConversationState } from "../inferutils/common";
+import { downloadR2Image, imagesToBase64, imageToBase64, ProcessedImageAttachment } from "worker/types/image-attachment";
 
 // Constants
 const CHUNK_SIZE = 64;
 
 // Compactification thresholds
 const COMPACTIFICATION_CONFIG = {
-    MAX_TURNS: MAX_LLM_MESSAGES,              // Trigger after 50 conversation turns
+    MAX_TURNS: MAX_LLM_MESSAGES,            // Trigger after 50 conversation turns
     MAX_ESTIMATED_TOKENS: 100000,
     PRESERVE_RECENT_MESSAGES: 10, // Always keep last 10 messages uncompacted
     CHARS_PER_TOKEN: 4,         // Rough estimation: 1 token ≈ 4 characters
@@ -53,7 +54,7 @@ export interface UserConversationInputs {
     conversationResponseCallback: ConversationResponseCallback;
     errors: RuntimeError[];
     projectUpdates: string[];
-    images?: string[];
+    images?: ProcessedImageAttachment[];
 }
 
 export interface UserConversationOutputs {
@@ -160,7 +161,6 @@ I hope this description of the system is enough for you to understand your own r
     You: "I understand. Clearly my previous changes weren't enough. Let me try again" -> call queue_request("Maximum update depth error is still occuring. Did you check the errors for the hint? Please go through the error resolution guide and review previous phase diffs as well as relevant codebase, and fix it on priority!")
 
 We have also recently added support for image inputs in beta. User can guide app generation or show bugs/UI issues using image inputs. You may inform the user about this feature.
-But it has limitations - Images are not stored in any form. Thus they would be lost after some time. They are just cached in the runtime temporarily. 
 
 ## IMPORTANT GUIDELINES:
 - DO NOT Write '<system_context>' tag in your response! That tag is only present in user responses
@@ -222,6 +222,27 @@ function buildUserMessageWithContext(userMessage: string, errors: RuntimeError[]
     }
 }
 
+async function prepareMessagesForInference(env: Env, messages: ConversationMessage[]) : Promise<ConversationMessage[]> {
+    // For each multimodal image, convert the image to base64 data url
+    const processedMessages = await Promise.all(messages.map(m => {
+        return mapImagesInMultiModalMessage(structuredClone(m), async (c) => {
+            let url = c.image_url.url;
+            if (url.includes('base64,')) {
+                return c;
+            }
+            const image = await downloadR2Image(env, url);
+            return {
+                ...c,
+                image_url: {
+                    ...c.image_url,
+                    url: await imageToBase64(env, image)
+                },
+            };
+        });
+    }));
+    return processedMessages;
+}
+
 export class UserConversationProcessor extends AgentOperation<UserConversationInputs, UserConversationOutputs> {
     /**
      * Remove system context tags from message content
@@ -247,7 +268,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             const userMessageForInference = images && images.length > 0
                 ? createMultiModalUserMessage(
                     userPromptForInference,
-                    images,
+                    await imagesToBase64(env, images),
                     'high'
                 )
                 : createUserMessage(userPromptForInference);
@@ -268,27 +289,32 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                 onComplete: (args: Record<string, unknown>, _result: unknown) => toolCallRenderer({ name: td.function.name, status: 'success', args })
             }));
 
-            const compactState = await this.compactifyContext(conversationState, env, options, toolCallRenderer, logger);
-            if (compactState.runningHistory.length !== conversationState.runningHistory.length) {
+            const runningHistory = await prepareMessagesForInference(env, conversationState.runningHistory);
+
+            const compactHistory = await this.compactifyContext(runningHistory, env, options, toolCallRenderer, logger);
+            if (compactHistory.length !== runningHistory.length) {
                 logger.info("Conversation history compactified", { 
                     fullHistoryLength: conversationState.fullHistory.length,
                     runningHistoryLength: conversationState.runningHistory.length,
-                    compactifiedRunningHistoryLength: compactState.runningHistory.length,
-                    reduction: conversationState.runningHistory.length - compactState.runningHistory.length
+                    compactifiedRunningHistoryLength: compactHistory.length,
+                    reduction: conversationState.runningHistory.length - compactHistory.length
                 });
             }
+
+            const messagesForInference =  [...systemPromptMessages, ...compactHistory, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}];
+
 
             logger.info("Executing inference for user message", { 
                 messageLength: userMessage.length,
                 aiConversationId,
-                tools
+                tools,
             });
             
             // Don't save the system prompts so that every time new initial prompts can be generated with latest project context
             // Use inference message (with images) for AI, but store text-only in history
             const result = await executeInference({
                 env: env,
-                messages: [...systemPromptMessages, ...compactState.runningHistory, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}],
+                messages: messagesForInference,
                 agentActionName: "conversationalResponse",
                 context: options.inferenceContext,
                 tools, // Enable tools for the conversational AI
@@ -315,8 +341,13 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             // For conversation history, store only text (images are ephemeral and not persisted)
             const userPromptForHistory = buildUserMessageWithContext(userMessage, errors, projectUpdates, false);
             const userMessageForHistory = images && images.length > 0
-                ? createUserMessage(`${userPromptForHistory}\n\n[${images.length} image(s) attached]`)
+                ? createMultiModalUserMessage(
+                    userPromptForHistory,
+                    images.map(img => img.r2Key),
+                    'high'
+                )
                 : createUserMessage(userPromptForHistory);
+
             
             const messages = [{...userMessageForHistory, conversationId: IdGenerator.generateConversationId()}];
 
@@ -331,13 +362,25 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             }
             messages.push({...createAssistantMessage(result.string), conversationId: IdGenerator.generateConversationId()});
 
-            // logger.info("Current conversation history", { messages });
+            // Derive compacted running history for storage using stable IDs (no re-compaction)
+            const originalRunning = conversationState.runningHistory;
+            let storageRunning = originalRunning;
+            if (compactHistory.length !== runningHistory.length) {
+                const summaryMessage = compactHistory[0]; // assistant text-only summary
+                const originalById = new Map(originalRunning.map(m => [m.conversationId, m] as const));
+                const preservedTail = compactHistory
+                    .slice(1)
+                    .map(m => originalById.get(m.conversationId))
+                    .filter((m): m is ConversationMessage => !!m);
+                storageRunning = [summaryMessage, ...preservedTail];
+            }
+
             return {
                 conversationResponse,
                 conversationState: {
-                    ...compactState,
-                    runningHistory: [...compactState.runningHistory, ...messages],
-                    fullHistory: [...compactState.fullHistory, ...messages]
+                    ...conversationState,
+                    runningHistory: [...storageRunning, ...messages],
+                    fullHistory: [...conversationState.fullHistory, ...messages]
                 }
             };
         } catch (error) {
@@ -538,46 +581,45 @@ Provide the summary now:`
      * - Respects turn boundaries to avoid tool call fragmentation
      */
     async compactifyContext(
-        conversationState: ConversationState,
+        runningHistory: ConversationMessage[],
         env: Env,
         options: OperationOptions,
         toolCallRenderer: RenderToolCall,
         logger: StructuredLogger
-    ): Promise<ConversationState> {
+    ): Promise<ConversationMessage[]> {
         try {
             // Check if compactification is needed on the running history
-            const analysis = this.shouldCompactify(conversationState.runningHistory);
+            const analysis = this.shouldCompactify(runningHistory);
             
             if (!analysis.should) {
                 // No compactification needed
-                return conversationState;
+                return runningHistory;
             }
             
             logger.info('Compactification triggered', {
                 reason: analysis.reason,
                 turns: analysis.turns,
                 estimatedTokens: analysis.estimatedTokens,
-                totalRunningMessages: conversationState.runningHistory.length,
-                totalFullMessages: conversationState.fullHistory.length
+                totalRunningMessages: runningHistory.length,
             });
 
             // Currently compactification would be done on the running history, but should we consider doing it on the full history?
             
             // Find turn boundary for splitting
             const splitIndex = this.findTurnBoundary(
-                conversationState.runningHistory,
+                runningHistory,
                 COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES
             );
             
             // Safety check: ensure we have something to compactify
             if (splitIndex <= 0) {
                 logger.warn('Cannot find valid turn boundary for compactification, preserving all messages');
-                return conversationState;
+                return runningHistory;
             }
             
             // Split messages
-            const messagesToSummarize = conversationState.runningHistory.slice(0, splitIndex);
-            const recentMessages = conversationState.runningHistory.slice(splitIndex);
+            const messagesToSummarize = runningHistory.slice(0, splitIndex);
+            const recentMessages = runningHistory.slice(splitIndex);
             
             logger.info('Compactification split determined', {
                 summarizeCount: messagesToSummarize.length,
@@ -625,33 +667,27 @@ Provide the summary now:`
             const compactifiedHistory = [summaryMessage, ...recentMessages];
             
             logger.info('Compactification completed with archival', {
-                originalMessageCount: conversationState.runningHistory.length,
+                originalMessageCount: runningHistory.length,
                 newMessageCount: compactifiedHistory.length,
-                compressionRatio: (compactifiedHistory.length / conversationState.runningHistory.length).toFixed(2),
+                compressionRatio: (compactifiedHistory.length / runningHistory.length).toFixed(2),
                 estimatedTokenSavings: analysis.estimatedTokens - this.estimateTokens(compactifiedHistory),
                 archivedMessageCount: messagesToSummarize.length,
                 archiveId
             });
             
-            return {
-                ...conversationState,
-                runningHistory: compactifiedHistory
-            };
+            return compactifiedHistory;
             
         } catch (error) {
             logger.error('Compactification failed, preserving original messages', { error });
             
             // Safe fallback: if we have too many messages, keep recent ones
-            if (conversationState.runningHistory.length > COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 3) {
+            if (runningHistory.length > COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 3) {
                 const fallbackCount = COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 2;
                 logger.warn(`Applying emergency fallback: keeping last ${fallbackCount} messages`);
-                return {
-                    ...conversationState,
-                    runningHistory: conversationState.runningHistory.slice(-fallbackCount)
-                };
+                return runningHistory.slice(-fallbackCount);
             }
 
-            return conversationState;
+            return runningHistory;
         }
     }
 

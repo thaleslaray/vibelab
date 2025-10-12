@@ -41,7 +41,7 @@ import { prepareCloudflareButton } from '../../utils/deployToCf';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
 import { generateId } from 'worker/utils/idGenerator';
-import type { ImageAttachment } from '../../types/image-attachment';
+import { processImage, type ImageAttachment, type ProcessedImageAttachment } from '../../types/image-attachment';
 import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
 import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aigateway-proxy/controller';
@@ -104,7 +104,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     
     // In-memory storage for user-uploaded images (not persisted in DO state)
     // These are temporary and will be lost if the DO is evicted
-    private pendingUserImages: string[] = [];
+    private pendingUserImages: ProcessedImageAttachment[] = []
     
     protected operations: Operations = {
         codeReview: new CodeReviewOperation(),
@@ -178,18 +178,22 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     * in the agent's core state and store the full conversation in a separate DO table.
     */
     getConversationState(id: string = DEFAULT_CONVERSATION_SESSION_ID): ConversationState {
-        // We shall only store compactified conversations in agent's core state
         const currentConversation = this.state.conversationMessages;
-        // Store full conversations in separate DO table
-        const fullConversation = this.sql<{ messages: ConversationMessage[], id: string}>`SELECT * FROM full_conversations WHERE id = ${id}`;
-        let fullHistory = fullConversation.length > 0 ? fullConversation[0].messages : [];
+        const rows = this.sql<{ messages: string, id: string }>`SELECT * FROM full_conversations WHERE id = ${id}`;
+        let fullHistory: ConversationMessage[] = [];
+        if (rows.length > 0 && rows[0].messages) {
+            try {
+                const parsed = JSON.parse(rows[0].messages);
+                if (Array.isArray(parsed)) {
+                    fullHistory = parsed as ConversationMessage[];
+                }
+            } catch (_e) {}
+        }
         if (fullHistory.length === 0) {
-            // Migration for old states
             fullHistory = currentConversation;
         }
-            
         return {
-            id: id,    // Multiple conversations per agent support coming in the future
+            id: id,
             runningHistory: currentConversation,
             fullHistory,
         };
@@ -200,7 +204,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             ...this.state,
             conversationMessages: conversations.runningHistory,
         });
-        this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${JSON.stringify(conversations.fullHistory)})`;
+        const serialized = JSON.stringify(conversations.fullHistory);
+        try {
+            this.logger().info(`Saving conversation state ${conversations.id}, length: ${serialized.length}`, { fullHistory: conversations.fullHistory });
+            this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${serialized})`;
+        } catch (error) {
+            this.logger().error(`Failed to save conversation state ${conversations.id}, length: ${serialized.length}`, error, conversations.fullHistory);
+        }
     }
 
     constructor(ctx: AgentContext, env: Env) {
@@ -438,7 +448,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info('README.md generated successfully');
     }
 
-    async queueUserRequest(request: string, images?: string[]): Promise<void> {
+    async queueUserRequest(request: string, images?: ProcessedImageAttachment[]): Promise<void> {
         this.rechargePhasesCounter(3);
         this.setState({
             ...this.state,
@@ -2420,15 +2430,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info('Passing context to user conversation processor', { errors, projectUpdates });
 
             // If there are images, upload them and pass the URLs to the conversation processor
-            let imageUrls: string[] = [];
+            let uploadedImages: ProcessedImageAttachment[] = [];
             if (images) {
-                imageUrls = await Promise.all(images.map(async (image) => {
-                    return await uploadImage(this.env, {
-                        ...image,
-                        id: this.getAgentId(),
-                        filename: encodeURIComponent(`${image.id}-${image.filename}`),
-                    }, ImageType.UPLOADS);
+                uploadedImages = await Promise.all(images.map(async (image) => {
+                    return await processImage(this.env, image);
                 }));
+
+                this.logger().info('Uploaded images', { uploadedImages });
             }
 
             // Process the user message using conversational assistant
@@ -2451,7 +2459,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     },
                     errors,
                     projectUpdates,
-                    images: imageUrls
+                    images: uploadedImages
                 }, 
                 this.getOperationOptions()
             );
