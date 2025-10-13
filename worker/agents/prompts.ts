@@ -602,9 +602,12 @@ const a = useStore(s => s.a);
 const b = useStore(s => s.b);
 const c = useStore(s => s.c);
 
-// Option 2: useShallow wrapper (advanced, only if needed)
-import { useShallow } from 'zustand/react/shallow';
-const { a, b, c } = useStore(useShallow(s => ({ a: s.a, b: s.b, c: s.c })));
+// Option 2: shallow equality for STABLE objects (advanced; only if the object
+// reference comes directly from the store and does not get re-created). Do NOT
+// allocate objects in the selector.
+import { shallow } from 'zustand/shallow';
+const viewport = useStore(s => s.viewport, shallow); // ✅ stable object from store
+// ❌ BAD: const v = useStore(s => ({ ...s.viewport })); // allocates new object
 
 // Option 3: Store methods → Select primitives + useMemo in component
 const items = useStore(s => s.items);
@@ -679,6 +682,7 @@ const handleClick = useCallback(() => setCount(prev => prev + 1), []);
 ✅ **Functional updates** - \`setState(prev => prev + 1)\` for correctness
 ✅ **useRef for non-UI data** - Doesn't trigger re-renders
 ✅ **Derive, don't mirror** - \`const upper = prop.toUpperCase()\` not useState
+✅ **DOM listeners stable** - Keep effect deps static; read live store values via refs; do not reattach listeners on every state change
 
 **QUICK VALIDATION BEFORE SUBMITTING CODE:**
 → Search for: \`useStore(s => ({\`, \`useStore(s => s.get\`, \`useStore()\`
@@ -767,7 +771,7 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
     **FRAMEWORK & SYNTAX SPECIFICS:**
     •   Framework compatibility: Pay attention to version differences (Tailwind v3 vs v4, React Router versions)
     •   No environment variables: App deploys serverless - avoid libraries requiring env vars unless they support defaults
-    •   Next.js best practices: Follow latest patterns to prevent dev server rendering issues
+    •   React/Vite best practices: Follow patterns compatible with Vite + React (avoid Next.js-specific APIs)
     •   Tailwind classes: Verify all classes exist in tailwind.config.js (e.g., avoid undefined classes like \`border-border\`)
     •   Component exports: Export all components properly, avoid mixing default/named imports
     •   UI spacing: Ensure proper padding/margins, avoid left-aligned layouts without proper spacing
@@ -1030,7 +1034,7 @@ bun add @geist-ui/react@1
     • **Mobile-First Excellence:** Design for mobile, enhance for desktop:
         - **Touch Targets:** Minimum 44px touch targets for mobile usability
         - **Typography Scaling:** text-2xl md:text-4xl lg:text-5xl for responsive headers
-        - **Image Handling:** aspect-w-16 aspect-h-9 for consistent image ratios
+        - **Image Handling:** Prefer Tailwind v3-safe utilities like aspect-video or aspect-[16/9] for consistent image ratios
     • **Breakpoint Strategy:** Use Tailwind breakpoints meaningfully:
         - **sm (640px):** Tablet portrait adjustments
         - **md (768px):** Tablet landscape and small desktop
@@ -1048,7 +1052,42 @@ bun add @geist-ui/react@1
     - ✅ **Empty State Beauty:** Inspiring empty states that guide users toward their first success
     - ✅ **Accessibility Excellence:** Proper contrast ratios, keyboard navigation, screen reader support
     - ✅ **Performance Smooth:** 60fps animations and instant perceived load times`,
-    PROJECT_CONTEXT: `Here is everything you will need about the project:
+    UI_NON_NEGOTIABLES_V3: `## UI NON-NEGOTIABLES (Tailwind v3-safe, shadcn/ui first)
+
+1) Root Wrapper & Gutters (copy exactly)
+export default function Page() {
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="py-8 md:py-10 lg:py-12">
+        {/* content */}
+      </div>
+    </div>
+  );
+}
+
+2) Prefer shadcn/ui components heavily
+- Use shadcn/ui primitives for structure and widgets (e.g., Button, Card, Input, Sheet, Sidebar)
+- Import from "@/components/ui/..." and compose with Tailwind utilities. Use Radix primitives as needed for composition.
+
+3) Tailwind v3-safe Instructions
+- Avoid CSS @theme or CSS @plugin directives in component styles
+- Prefer built-in utilities only; avoid plugin-only utilities unless template shows they exist
+- For media sizing, prefer aspect-video or aspect-[16/9] and object-cover
+
+4) Good vs Bad
+- BAD: top-level <div> with no gutters (content flush to the left edge)
+- GOOD: wrap with max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 and section spacing py-8 md:py-10 lg:py-12
+
+5) Color & Contrast (light theme defaults)
+- Primary labels: text-foreground
+- Secondary/meta: text-muted-foreground
+- Selected state: bg-accent text-accent-foreground (or bg-primary text-primary-foreground)
+- Icons: text-foreground/80 hover:text-foreground
+- Inputs: bg-secondary text-secondary-foreground border border-input; placeholder:text-muted-foreground
+- Never place muted text over dark backgrounds; if background is dark, use paired *-foreground or text-white
+- Aim for >= 4.5:1 contrast for normal text (>= 3:1 for large)
+`,
+PROJECT_CONTEXT: `Here is everything you will need about the project:
 
 <PROJECT_CONTEXT>
 
@@ -1297,7 +1336,7 @@ ${runtimeErrorsText || 'No runtime errors detected'}
 ${staticAnalysisText}
 
 ## ANALYSIS INSTRUCTIONS
-- **PRIORITIZE** "Maximum update depth exceeded" and useEffect-related errors  
+- **PRIORITIZE** "Maximum update depth exceeded" and useEffect-related errors. If 'Warning: The result of getSnapshot should be cached to avoid an infinite loop' is present, it is a high priority issue to be resolved ASAP. 
 - **CROSS-REFERENCE** error messages with current code structure (line numbers may be outdated)
 - **VALIDATE** reported issues against actual code patterns before fixing
 - **FOCUS** on deployment-blocking runtime errors over linting issues`
