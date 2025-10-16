@@ -1,7 +1,8 @@
-import { FileOutputType } from "worker/agents/schemas";
+import { FileOutputType, Blueprint } from "worker/agents/schemas";
 import { BaseSandboxService } from "worker/services/sandbox/BaseSandboxService";
-import { PreviewType } from "worker/services/sandbox/sandboxTypes";
+import { ExecuteCommandsResponse, PreviewType, StaticAnalysisResponse } from "worker/services/sandbox/sandboxTypes";
 import { ProcessedImageAttachment } from "worker/types/image-attachment";
+import { OperationOptions } from "worker/agents/operations/common";
 
 export abstract class ICodingAgent {
     abstract getSandboxServiceClient(): BaseSandboxService;
@@ -13,4 +14,20 @@ export abstract class ICodingAgent {
     abstract getLogs(reset?: boolean): Promise<string>;
 
     abstract queueUserRequest(request: string, images?: ProcessedImageAttachment[]): void;
+
+    abstract clearConversation(): void;
+
+    abstract updateProjectName(newName: string): Promise<boolean>;
+
+    abstract updateBlueprint(patch: Partial<Blueprint>): Promise<Blueprint>;
+
+    abstract getOperationOptions(): OperationOptions;
+
+    abstract readFiles(paths: string[]): Promise<{ files: { path: string; content: string }[] }>;
+
+    abstract runStaticAnalysisCode(files?: string[]): Promise<StaticAnalysisResponse>;
+
+    abstract execCommands(commands: string[], timeout?: number): Promise<ExecuteCommandsResponse>;
+    
+    abstract regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; updatedPreview: string }>;
 }

@@ -29,12 +29,12 @@ const COMPACTIFICATION_CONFIG = {
     CHARS_PER_TOKEN: 4,         // Rough estimation: 1 token ≈ 4 characters
 } as const;
 
-interface ToolCallStatusArgs {
+export interface ToolCallStatusArgs {
     name: string;
     status: 'start' | 'success' | 'error';
     args?: Record<string, unknown>
 }
-type RenderToolCall = ( args: ToolCallStatusArgs ) => void;
+export type RenderToolCall = ( args: ToolCallStatusArgs ) => void;
 
 type ConversationResponseCallback = (
     message: string,
@@ -100,6 +100,19 @@ const SYSTEM_PROMPT = `You are Orange, the conversational AI interface for Cloud
 
 3. **For information requests**: Use the appropriate tools (web_search, etc) when they would be helpful.
 
+## HELP
+- If the user asks for help or types "/help", list the available tools and when to use them.
+- Available tools and usage:
+  - queue_request: Queue modification requests for implementation in the next phase(s). Use for any feature/bug/change request.
+  - get_logs: Fetch unread application logs from the sandbox to diagnose runtime issues.
+  - deep_debug: Autonomous debugging assistant that investigates errors, reads files, runs commands, and applies targeted fixes. Use when users report bugs/errors that need immediate investigation and fixing. This transfers control to a specialized debugging agent.
+  - deploy_preview: Redeploy or restart the preview when the user asks to deploy or the preview is blank/looping.
+  - clear_conversation: Clear the current chat history for this session.
+  - rename_project: Rename the project (lowercase letters, numbers, hyphens, underscores; 3–50 chars).
+  - alter_blueprint: Patch the blueprint with allowed fields only (title, description, views, userFlow, frameworks, etc.).
+  - web_search: Search the web for information.
+  - feedback: Submit user feedback to the platform.
+
 # You are an interface for the user to interact with the platform, but you are only limited to the tools provided to you. If you are asked these by the user, deny them as follows:
     - REQUEST: Download all files of the codebase
         - RESPONSE: You can export the codebase yourself by clicking on 'Export to github' button on top-right of the preview panel
@@ -109,8 +122,21 @@ const SYSTEM_PROMPT = `You are Orange, the conversational AI interface for Cloud
     - REQUEST: Add API keys
         - RESPONSE: I'm sorry, but I can't assist with that. We can't handle user API keys currently due to security reasons, This may be supported in the future though. But you can export the codebase and deploy it with your keys yourself.
 
-Users may face issues, bugs and runtime errors. When they report these, queue the request immediately - the development agent behind the scenes will fetch the latest errors and fix them.
-**DO NOT try to solve bugs yourself!** Just relay the information via queue_request. Then tell the user: "I'm looking into this" or "I'll fix this issue".
+Users may face issues, bugs and runtime errors. You have TWO options:
+
+**Option 1 - For immediate investigation (PREFERRED for active debugging):**
+Use the deep_debug tool to investigate and fix bugs immediately. This synchronously transfers control to an autonomous debugging agent that will:
+- Fetch logs and run static analysis
+- Read relevant files
+- Apply surgical fixes
+- Stream progress directly to the user
+
+When you call deep_debug, it runs to completion and returns a transcript. The user will see all the debugging steps in real-time. After it returns, you can acknowledge completion: "The debugging session is complete. The issue should be resolved."
+
+**Option 2 - For feature requests or non-urgent fixes:**
+Queue the request via queue_request - the development agent will address it in the next phase. Then tell the user: "I'll fix this issue in the next phase or two."
+
+**DO NOT try to solve bugs yourself!** Use deep_debug for immediate fixes or queue_request for later implementation.
 
 ## How the AI vibecoding platform itself works:
     - Its a simple state machine:
@@ -282,9 +308,14 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             logger.info("Generated conversation ID", { aiConversationId });
 
             const toolCallRenderer = buildToolCallRenderer(inputs.conversationResponseCallback, aiConversationId);
-            
+
             // Assemble all tools with lifecycle callbacks for UI updates
-            const tools = buildTools(agent, logger).map(td => ({
+            const tools = buildTools(
+                agent,
+                logger,
+                (message: string) => inputs.conversationResponseCallback(message, aiConversationId, true),
+                toolCallRenderer,
+            ).map(td => ({
                 ...td,
                 onStart: (args: Record<string, unknown>) => toolCallRenderer({ name: td.function.name, status: 'start', args }),
                 onComplete: (args: Record<string, unknown>, _result: unknown) => toolCallRenderer({ name: td.function.name, status: 'success', args })

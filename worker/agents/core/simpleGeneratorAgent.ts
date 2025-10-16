@@ -33,7 +33,7 @@ import { InferenceContext, AgentActionKey } from '../inferutils/config.types';
 import { AGENT_CONFIG } from '../inferutils/config';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
 import { FileFetcher, fixProjectIssues } from '../../services/code-fixer';
-import { FastCodeFixerOperation } from '../operations/FastCodeFixer';
+import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { getProtocolForHost } from '../../utils/urls';
 import { looksLikeCommand } from '../utils/common';
 import { generateBlueprint } from '../planning/blueprint';
@@ -335,11 +335,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return this.getAgentId() ? true : false
     }  
     
-    onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {
-        // You can leave this empty to disable logging
-        // Or, you can log a more specific message, for example:
-        this.logger().info("State was updated.");
-    }
+    onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {}
 
     setState(state: CodeGenState): void {
         try {
@@ -425,7 +421,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return this.state.phasesCounter;
     }
 
-    private getOperationOptions(): OperationOptions {
+    getOperationOptions(): OperationOptions {
         return {
             env: this.env,
             agentId: this.getAgentId(),
@@ -1444,7 +1440,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
      * Perform static code analysis on the generated files
      * This helps catch potential issues early in the development process
      */
-    async runStaticAnalysisCode(): Promise<StaticAnalysisResponse> {
+    async runStaticAnalysisCode(files?: string[]): Promise<StaticAnalysisResponse> {
         const { sandboxInstanceId } = this.state;
 
         if (!sandboxInstanceId) {
@@ -1454,10 +1450,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
         this.logger().info(`Linting code in sandbox instance ${sandboxInstanceId}`);
 
-        const files = this.fileManager.getGeneratedFilePaths();
+        const targetFiles = Array.isArray(files) && files.length > 0
+            ? files
+            : this.fileManager.getGeneratedFilePaths();
 
         try {
-            const analysisResponse = await this.getSandboxServiceClient()?.runStaticAnalysisCode(sandboxInstanceId, files);
+            const analysisResponse = await this.getSandboxServiceClient()?.runStaticAnalysisCode(sandboxInstanceId, targetFiles);
 
             if (!analysisResponse || analysisResponse.error) {
                 const errorMsg = `Code linting failed: ${analysisResponse?.error || 'Unknown error'}, full response: ${JSON.stringify(analysisResponse)}`;
@@ -1640,6 +1638,131 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return { runtimeErrors, staticAnalysis, clientErrors };
     }
 
+    async updateProjectName(newName: string): Promise<boolean> {
+        try {
+            const valid = /^[a-z0-9-_]{3,50}$/.test(newName);
+            if (!valid) return false;
+            const updatedBlueprint = { ...this.state.blueprint, projectName: newName } as Blueprint;
+            this.setState({
+                ...this.state,
+                blueprint: updatedBlueprint
+            });
+            let ok = true;
+            if (this.state.sandboxInstanceId) {
+                try {
+                    ok = await this.getSandboxServiceClient().updateProjectName(this.state.sandboxInstanceId, newName);
+                } catch (_) {
+                    ok = false;
+                }
+            }
+            try {
+                const appService = new AppService(this.env);
+                const dbOk = await appService.updateApp(this.getAgentId(), { title: newName });
+                ok = ok && dbOk;
+            } catch (error) {
+                this.logger().error('Error updating project name in database:', error);
+                ok = false;
+            }
+            this.broadcast(WebSocketMessageResponses.PROJECT_NAME_UPDATED, {
+                message: 'Project name updated',
+                projectName: newName
+            });
+            return ok;
+        } catch (error) {
+            this.logger().error('Error updating project name:', error);
+            return false;
+        }
+    }
+
+    async updateBlueprint(patch: Partial<Blueprint>): Promise<Blueprint> {
+        const keys = Object.keys(patch) as (keyof Blueprint)[];
+        const allowed = new Set<keyof Blueprint>([
+            'title',
+            'projectName',
+            'detailedDescription',
+            'description',
+            'colorPalette',
+            'views',
+            'userFlow',
+            'dataFlow',
+            'architecture',
+            'pitfalls',
+            'frameworks',
+            'implementationRoadmap'
+        ]);
+        const filtered: Partial<Blueprint> = {};
+        for (const k of keys) {
+            if (allowed.has(k) && typeof (patch as any)[k] !== 'undefined') {
+                (filtered as any)[k] = (patch as any)[k];
+            }
+        }
+        if (typeof filtered.projectName === 'string' && filtered.projectName) {
+            await this.updateProjectName(filtered.projectName);
+            delete (filtered as any).projectName;
+        }
+        const updated: Blueprint = { ...this.state.blueprint, ...(filtered as Blueprint) } as Blueprint;
+        this.setState({
+            ...this.state,
+            blueprint: updated
+        });
+        this.broadcast(WebSocketMessageResponses.BLUEPRINT_UPDATED, {
+            message: 'Blueprint updated',
+            updatedKeys: Object.keys(filtered)
+        });
+        return updated;
+    }
+
+    // ===== Debugging helpers for assistants =====
+    async readFiles(paths: string[]): Promise<{ files: { path: string; content: string }[] }> {
+        const { sandboxInstanceId } = this.state;
+        if (!sandboxInstanceId) {
+            return { files: [] };
+        }
+        const resp = await this.getSandboxServiceClient().getFiles(sandboxInstanceId, paths);
+        if (!resp.success) {
+            this.logger().warn('readFiles failed', { error: resp.error });
+            return { files: [] };
+        }
+        return { files: resp.files.map(f => ({ path: f.filePath, content: f.fileContents })) };
+    }
+
+    async execCommands(commands: string[], timeout?: number) {
+        const { sandboxInstanceId } = this.state;
+        if (!sandboxInstanceId) {
+            return { success: false, results: [], error: 'No sandbox instance' } as any;
+        }
+        return await this.getSandboxServiceClient().executeCommands(sandboxInstanceId, commands, timeout);
+    }
+
+    async regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; updatedPreview: string }> {
+        const { sandboxInstanceId } = this.state;
+        if (!sandboxInstanceId) {
+            throw new Error('No sandbox instance available');
+        }
+        // Prefer local file manager; fallback to sandbox
+        let fileContents = '';
+        let filePurpose = '';
+        try {
+            const fmFile = this.fileManager.getFile(path);
+            if (fmFile) {
+                fileContents = fmFile.fileContents;
+                filePurpose = fmFile.filePurpose || '';
+            } else {
+                const resp = await this.getSandboxServiceClient().getFiles(sandboxInstanceId, [path]);
+                const f = resp.success ? resp.files.find(f => f.filePath === path) : undefined;
+                if (!f) throw new Error(resp.error || `File not found: ${path}`);
+                fileContents = f.fileContents;
+            }
+        } catch (e) {
+            throw new Error(`Failed to read file for regeneration: ${String(e)}`);
+        }
+
+        const regenerated = await this.regenerateFile({ filePath: path, fileContents, filePurpose }, issues, 0);
+        // Persist to sandbox instance
+        await this.getSandboxServiceClient().writeFiles(sandboxInstanceId, [{ filePath: regenerated.filePath, fileContents: regenerated.fileContents }], `Deep debugger fix: ${path}`);
+        return { path, updatedPreview: regenerated.fileContents.slice(0, 4000) };
+    }
+
     async waitForPreview(): Promise<void> {
         this.logger().info("Waiting for preview");
         if (!this.state.sandboxInstanceId) {
@@ -1777,11 +1900,28 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     // because usually LLMs will only generate install commands or rm commands. 
                     // This is to handle the bug still present in a lot of apps because of an exponential growth of commands
                 }
-                this.getSandboxServiceClient().executeCommands(sandboxInstanceId, cmds);
                 this.broadcast(WebSocketMessageResponses.COMMAND_EXECUTING, {
                     message: "Executing setup commands",
                     commands: cmds,
                 });
+                try {
+                    await Promise.race([
+                        this.getSandboxServiceClient().executeCommands(sandboxInstanceId, cmds),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Command execution timed out after 60 seconds')), 60000))
+                    ]);
+                    this.broadcast(WebSocketMessageResponses.COMMAND_EXECUTED, {
+                        message: "Setup commands executed successfully",
+                        commands: cmds,
+                        output: "Setup commands executed successfully",
+                    });
+                } catch (error) {
+                    this.logger().error('Failed to execute commands', error);
+                    this.broadcast(WebSocketMessageResponses.COMMAND_EXECUTION_FAILED, {
+                        message: "Failed to execute setup commands",
+                        commands: cmds,
+                        error: String(error),
+                    });
+                }
             }
 
             // Clear any existing health check interval before creating a new one

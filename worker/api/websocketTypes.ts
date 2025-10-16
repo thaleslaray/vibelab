@@ -92,6 +92,20 @@ type CommandExecutingMessage = {
 	commands: string[];
 };
 
+type CommandExecutedMessage = {
+	type: 'command_executed';
+	message: string;
+	commands: string[];
+    output?: string;
+};
+
+type CommandExecutionFailedMessage = {
+	type: 'command_execution_failed';
+	message: string;
+	commands: string[];
+    error?: string;
+};
+
 type CodeReviewingMessage = {
 	type: 'code_reviewing';
 	message: string;
@@ -404,6 +418,8 @@ export type WebSocketMessage =
 	| CodeReviewingMessage
 	| CodeReviewedMessage
 	| CommandExecutingMessage
+    | CommandExecutedMessage
+    | CommandExecutionFailedMessage
 	| RuntimeErrorFoundMessage
 	| CodeFixEdits
     | StaticAnalysisResults

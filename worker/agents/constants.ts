@@ -41,7 +41,10 @@ export const WebSocketMessageResponses: Record<string, WebSocketMessageType> = {
 
     CODE_REVIEWING: 'code_reviewing',
     CODE_REVIEWED: 'code_reviewed',
+
     COMMAND_EXECUTING: 'command_executing',
+    COMMAND_EXECUTED: 'command_executed',
+    COMMAND_EXECUTION_FAILED: 'command_execution_failed',
     
     // Generation control messages
     GENERATION_STOPPED: 'generation_stopped',

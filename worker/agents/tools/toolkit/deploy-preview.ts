@@ -15,7 +15,7 @@ export function createDeployPreviewTool(
 		function: {
 			name: 'deploy_preview',
 			description:
-				'Deploys the current application to a preview environment. **ONLY use this tool when:** (1) User explicitly requests deployment/deploy, OR (2) User reports the preview screen is blank/not showing anything, OR (3) User reports the preview page keeps refreshing/reloading. Do NOT use this tool for regular code changes - the preview auto-updates.',
+				'Deploys the current application to a preview environment.',
 			parameters: {
 				type: 'object',
 				properties: {},
