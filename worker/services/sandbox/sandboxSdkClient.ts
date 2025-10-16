@@ -1650,7 +1650,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                                 line: message.line || 0,
                                 column: message.column,
                                 severity: this.mapESLintSeverity(message.severity),
-                                ruleId: message.ruleId,
+                                ruleId: message.ruleId || '',
                                 source: 'eslint'
                             });
                         }
