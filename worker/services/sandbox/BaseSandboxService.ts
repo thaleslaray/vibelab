@@ -178,6 +178,8 @@ import { FileOutputType } from 'worker/agents/schemas';
      * Returns: { success: boolean, results: [...], message?: string, error?: string }
      */
     abstract executeCommands(instanceId: string, commands: string[], timeout?: number): Promise<ExecuteCommandsResponse>;
+ 
+    abstract updateProjectName(instanceId: string, projectName: string): Promise<boolean>;
   
     // ==========================================
     // ERROR MANAGEMENT (Required)

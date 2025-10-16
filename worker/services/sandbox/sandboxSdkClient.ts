@@ -164,6 +164,23 @@ export class SandboxSdkClient extends BaseSandboxService {
         }
     }
 
+    async updateProjectName(instanceId: string, projectName: string): Promise<boolean> {
+        try {
+            await this.updateProjectConfiguration(instanceId, projectName);
+            try {
+                const metadata = await this.getInstanceMetadata(instanceId);
+                const updated = { ...metadata, projectName } as InstanceMetadata;
+                await this.storeInstanceMetadata(instanceId, updated);
+            } catch (error) {
+                this.logger.error('Failed to update instance metadata', error);
+            }
+            return true;
+        } catch (error) {
+            this.logger.error('Failed to update project name', error);
+            return false;
+        }
+    }
+
     private getInstanceMetadataFile(instanceId: string): string {
         return `${instanceId}-metadata.json`;
     }

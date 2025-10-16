@@ -61,6 +61,8 @@ export const WebSocketMessageResponses: Record<string, WebSocketMessageType> = {
     CONVERSATION_RESPONSE: 'conversation_response',
     CONVERSATION_CLEARED: 'conversation_cleared',
     CONVERSATION_STATE: 'conversation_state',
+    PROJECT_NAME_UPDATED: 'project_name_updated',
+    BLUEPRINT_UPDATED: 'blueprint_updated',
     
     // Model configuration info
     MODEL_CONFIGS_INFO: 'model_configs_info',

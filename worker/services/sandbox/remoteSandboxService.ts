@@ -234,6 +234,10 @@ export class RemoteSandboxServiceClient extends BaseSandboxService{
         return this.makeRequest('/instances', 'GET');
     }
 
+    async updateProjectName(instanceId: string, projectName: string): Promise<boolean> {
+        return this.makeRequest(`/instances/${instanceId}/name`, 'POST', undefined, { projectName });
+    }
+
     /**
      * Get logs from a runner instance
      */

@@ -315,6 +315,18 @@ type ConversationClearedMessage = {
 	clearedMessageCount: number;
 };
 
+type ProjectNameUpdatedMessage = {
+	type: 'project_name_updated';
+	message: string;
+	projectName: string;
+};
+
+type BlueprintUpdatedMessage = {
+	type: 'blueprint_updated';
+	message: string;
+	updatedKeys: string[];
+};
+
 type DeterministicCodeFixStartedMessage = {
 	type: 'deterministic_code_fix_started';
 	message: string;
@@ -419,6 +431,8 @@ export type WebSocketMessage =
 	| UserSuggestionsProcessingMessage
 	| ConversationResponseMessage
 	| ConversationClearedMessage
+    | ProjectNameUpdatedMessage
+    | BlueprintUpdatedMessage
     | DeterministicCodeFixStartedMessage
     | DeterministicCodeFixCompletedMessage
 	| ModelConfigsInfoMessage
