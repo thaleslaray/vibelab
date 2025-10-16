@@ -75,7 +75,7 @@ type DeploymentStartedMessage = {
 
 type DeploymentFailedMessage = {
 	type: 'deployment_failed';
-	message: string;
+	error: string;
 };
 
 type DeploymentCompletedMessage = {

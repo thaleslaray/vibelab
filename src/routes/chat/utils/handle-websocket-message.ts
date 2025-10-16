@@ -354,7 +354,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'deployment_failed': {
-                toast.error(`Error: ${message.message}`);
+                toast.error(message.error);
                 break;
             }
 
