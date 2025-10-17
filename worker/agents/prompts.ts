@@ -110,7 +110,7 @@ and provide a preview url for the application.
                 const errorText = e.message;
                 // Remove any trace lines with no 'tsx' or 'ts' extension in them
                 const cleanedText = errorText.split('\n')
-                                    .map(line => line.includes('/deps/') && !(line.includes('.tsx') || line.includes('.ts')) ? '...' : line)
+                                    .map(line => line.includes('/deps/') && !(line.includes('.tsx') || line.includes('.ts')) ? '' : line).filter(line => line.trim() !== '')
                                     .join('\n');
                 // Truncate to 1000 characters to prevent context overflow
                 return `<error>${cleanedText.slice(0, 1000)}</error>`;
@@ -582,8 +582,14 @@ const value = useMemo(() => ({ user, setUser }), [user]);
 
 ❌ FORBIDDEN PATTERNS (ALL CAUSE INFINITE LOOPS):
 \`\`\`tsx
-// Pattern 1: Object literal selector without useShallow
+// Pattern 1: Object literal selector (with or without useShallow)
 const { a, b, c } = useStore(s => ({ a: s.a, b: s.b, c: s.c })); // ❌ CRASH
+
+// Pattern 1b: useShallow DOES NOT FIX object literal selectors!
+import { useShallow } from 'zustand/react/shallow';
+const { a, b, c } = useStore(useShallow(s => ({ a: s.a, b: s.b, c: s.c }))); // ❌ STILL CRASHES!
+// Why? You're creating a NEW object ({ a, b, c }) every render in the selector
+// useShallow can't help - the object reference is new every time
 
 // Pattern 2: No selector (returns whole state object)
 const { a, b, c } = useStore(); // ❌ CRASH
@@ -595,19 +601,25 @@ const filtered = useStore(s => s.items.filter(...)); // ❌ INFINITE LOOP
 const mapped = useStore(s => s.data.map(...)); // ❌ INFINITE LOOP
 \`\`\`
 
+⚠️ CRITICAL MISCONCEPTION - READ THIS:
+Many developers see "object literal selector without useShallow" and think "with useShallow" fixes it.
+NO! useShallow is ONLY for objects that ALREADY EXIST in your store, not for creating new objects.
+
 ✅ CORRECT PATTERNS (CHOOSE ONE):
 \`\`\`tsx
-// Option 1: Separate primitive selectors (RECOMMENDED - foolproof)
+// Option 1: Separate primitive selectors (RECOMMENDED - MOST EFFICIENT)
 const a = useStore(s => s.a);
 const b = useStore(s => s.b);
 const c = useStore(s => s.c);
+// ⚡ EFFICIENCY: Each selector ONLY triggers re-render when ITS value changes
+// This is NOT inefficient! It's the BEST pattern for Zustand.
 
-// Option 2: shallow equality for STABLE objects (advanced; only if the object
-// reference comes directly from the store and does not get re-created). Do NOT
-// allocate objects in the selector.
-import { shallow } from 'zustand/shallow';
-const viewport = useStore(s => s.viewport, shallow); // ✅ stable object from store
-// ❌ BAD: const v = useStore(s => ({ ...s.viewport })); // allocates new object
+// Option 2: useShallow for objects ALREADY IN the store (RARE - advanced)
+import { useShallow } from 'zustand/react/shallow';
+const viewport = useStore(useShallow(s => s.viewport)); 
+// ✅ ONLY when 'viewport' is an object that EXISTS in your store:
+// const store = create((set) => ({ viewport: { x: 0, y: 0 }, ... }))
+// ❌ NOT for creating new objects: useStore(useShallow(s => ({ x: s.x, y: s.y })))
 
 // Option 3: Store methods → Select primitives + useMemo in component
 const items = useStore(s => s.items);
@@ -616,6 +628,36 @@ const filtered = useMemo(() =>
     items.filter(i => i.status === filter), 
     [items, filter]
 );
+\`\`\`
+
+💡 IMPORTANT: Multiple Individual Selectors is MOST EFFICIENT (Debunking Common Myth)
+
+❌ WRONG BELIEF: "Multiple useStore calls = inefficient = many re-renders"
+✅ TRUTH: Each selector ONLY triggers re-render when ITS specific value changes
+
+Example:
+\`\`\`tsx
+const name = useStore(s => s.user.name);  // Subscribes to name only
+const count = useStore(s => s.count);     // Subscribes to count only
+
+// If count changes:
+// ✓ count selector triggers ONE re-render
+// ✓ name selector does NOT trigger (name didn't change)
+// Result: ONE re-render total - perfectly efficient!
+\`\`\`
+
+Contrast with object selector (even with useShallow):
+\`\`\`tsx
+const { name, count } = useStore(useShallow(s => ({ 
+  name: s.user.name, 
+  count: s.count 
+})));
+
+// If count changes:
+// ✗ Creates NEW object { name, count } every render
+// ✗ useShallow sees count changed, triggers re-render
+// ✗ NEW object creation itself can cause infinite loop
+// Result: LESS efficient + risk of crash
 \`\`\`
 
 ⚠️ CRITICAL DIFFERENCES:
