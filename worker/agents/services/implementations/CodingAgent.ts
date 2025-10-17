@@ -5,6 +5,7 @@ import { ICodingAgent } from "../interfaces/ICodingAgent";
 import { OperationOptions } from "worker/agents/operations/common";
 import { DeepDebugResult } from "worker/agents/core/types";
 import { RenderToolCall } from "worker/agents/operations/UserConversationProcessor";
+import { WebSocketMessageResponses } from "worker/agents/constants";
 
 /*
 * CodingAgentInterface - stub for passing to tool calls
@@ -25,7 +26,9 @@ export class CodingAgentInterface {
 
     async deployPreview(clearLogs: boolean = true): Promise<string> {
         const response = await this.agentStub.deployToSandbox([], false, undefined, clearLogs);
+        // Send a message to refresh the preview
         if (response && response.previewURL) {
+            this.agentStub.broadcast(WebSocketMessageResponses.PREVIEW_FORCE_REFRESH, {});
             return `Deployment successful: ${response.previewURL}`;
         } else {
             return `Failed to deploy: ${response?.tunnelURL}`;

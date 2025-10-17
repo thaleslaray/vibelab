@@ -583,6 +583,14 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 break;
             }
 
+            case 'preview_force_refresh': {
+                setShouldRefreshPreview(true);
+                setTimeout(() => {
+                    setShouldRefreshPreview(false);
+                }, 100);
+                break;
+            }
+
             case 'generation_stopped': {
                 setIsGenerating(false);
                 setIsGenerationPaused(true);

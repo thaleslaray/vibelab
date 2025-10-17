@@ -25,6 +25,7 @@ export const WebSocketMessageResponses: Record<string, WebSocketMessageType> = {
     DEPLOYMENT_STARTED: 'deployment_started',
     DEPLOYMENT_COMPLETED: 'deployment_completed',
     DEPLOYMENT_FAILED: 'deployment_failed',
+    PREVIEW_FORCE_REFRESH: 'preview_force_refresh',
     // Cloudflare deployment messages
     CLOUDFLARE_DEPLOYMENT_STARTED: 'cloudflare_deployment_started',
     CLOUDFLARE_DEPLOYMENT_COMPLETED: 'cloudflare_deployment_completed', 

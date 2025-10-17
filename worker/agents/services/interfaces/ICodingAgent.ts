@@ -5,6 +5,7 @@ import { ProcessedImageAttachment } from "worker/types/image-attachment";
 import { OperationOptions } from "worker/agents/operations/common";
 import { DeepDebugResult } from "worker/agents/core/types";
 import { RenderToolCall } from "worker/agents/operations/UserConversationProcessor";
+import { WebSocketMessageType, WebSocketMessageData } from "worker/api/websocketTypes";
 
 export abstract class ICodingAgent {
     abstract getSandboxServiceClient(): BaseSandboxService;
@@ -42,6 +43,8 @@ export abstract class ICodingAgent {
     abstract isDeepDebugging(): boolean;
 
     abstract waitForDeepDebug(): Promise<void>;
+
+    abstract broadcast<T extends WebSocketMessageType>(message: T, data?: WebSocketMessageData<T>): void;
 
     abstract executeDeepDebug(
         issue: string,

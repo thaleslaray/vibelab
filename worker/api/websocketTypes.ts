@@ -86,6 +86,10 @@ type DeploymentCompletedMessage = {
 	message: string;
 };
 
+type PreviewForceRefreshMessage = {
+	type: 'preview_force_refresh';
+};
+
 type CommandExecutingMessage = {
 	type: 'command_executing';
 	message: string;
@@ -416,6 +420,7 @@ export type WebSocketMessage =
 	| DeploymentStartedMessage
 	| DeploymentCompletedMessage
 	| DeploymentFailedMessage
+	| PreviewForceRefreshMessage
 	| CodeReviewingMessage
 	| CodeReviewedMessage
 	| CommandExecutingMessage
