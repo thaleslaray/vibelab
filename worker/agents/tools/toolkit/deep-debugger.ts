@@ -6,6 +6,7 @@ import {
 	type FileIndexEntry,
 } from 'worker/agents/assistants/codeDebugger';
 import { RenderToolCall } from '../../operations/UserConversationProcessor';
+import { ConversationMessage } from '../../inferutils/common';
 
 export function createDeepDebuggerTool(
 	agent: CodingAgentInterface,
@@ -14,7 +15,7 @@ export function createDeepDebuggerTool(
 	toolRenderer?: RenderToolCall,
 ): ToolDefinition<
 	{ issue: string; focus_paths?: string[] },
-	{ transcript: string } | { error: string }
+	{ transcript: ConversationMessage[] } | { error: string }
 > {
 	return {
 		type: 'function',
@@ -55,12 +56,13 @@ export function createDeepDebuggerTool(
 					operationOptions.env,
 					operationOptions.inferenceContext,
 				);
-				const transcript = await dbg.run(
+				await dbg.run(
 					{ issue },
 					{ filesIndex, agent },
 					streamCb ? (chunk) => streamCb(chunk) : undefined,
 					toolRenderer,
 				);
+                const transcript = dbg.getTranscript();
 				return { transcript };
 			} catch (e) {
 				logger.error('Deep debugger failed', e);

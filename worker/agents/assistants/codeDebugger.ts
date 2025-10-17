@@ -1,5 +1,6 @@
 import Assistant from './assistant';
 import {
+    ConversationMessage,
 	createAssistantMessage,
 	createSystemMessage,
 	createUserMessage,
@@ -13,6 +14,7 @@ import { CodingAgentInterface } from '../services/implementations/CodingAgent';
 import { AGENT_CONFIG } from '../inferutils/config';
 import { buildDebugTools } from '../tools/customTools';
 import { RenderToolCall } from '../operations/UserConversationProcessor';
+import { IdGenerator } from '../utils/idGenerator';
 
 const SYSTEM_PROMPT = `You are an autonomous code debugging assistant.
 Goal: find root-cause fast and apply minimal, surgical fixes.
@@ -125,12 +127,19 @@ export class DeepCodeDebugger extends Assistant<Env> {
 			stream: streamCb
 				? { chunk_size: 64, onChunk: (c) => streamCb(c) }
 				: undefined,
-			temperature: 0.0,
-			reasoning_effort: 'low',
+			temperature: 0.2,
+			// reasoning_effort: 'low',
 		});
 
 		const out = result?.string || '';
 		this.save([createAssistantMessage(out)]);
 		return out;
+	}
+
+	getTranscript(): ConversationMessage[] {
+		return this.getHistory().map((m) => ({
+			...m,
+			conversationId: IdGenerator.generateConversationId(),
+		}));
 	}
 }
