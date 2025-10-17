@@ -3,6 +3,8 @@ import { BaseSandboxService } from "worker/services/sandbox/BaseSandboxService";
 import { ExecuteCommandsResponse, PreviewType, StaticAnalysisResponse, RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { ProcessedImageAttachment } from "worker/types/image-attachment";
 import { OperationOptions } from "worker/agents/operations/common";
+import { RenderToolCall } from "worker/agents/operations/UserConversationProcessor";
+import { DeepDebugResult } from "worker/agents/core/types";
 
 export abstract class ICodingAgent {
     abstract getSandboxServiceClient(): BaseSandboxService;
@@ -36,4 +38,14 @@ export abstract class ICodingAgent {
     abstract isCodeGenerating(): boolean;
 
     abstract waitForGeneration(): Promise<void>;
+
+    abstract isDeepDebugging(): boolean;
+
+    abstract waitForDeepDebug(): Promise<void>;
+
+    abstract executeDeepDebug(
+        issue: string,
+        focusPaths?: string[],
+        toolRenderer?: RenderToolCall
+    ): Promise<DeepDebugResult>;
 }

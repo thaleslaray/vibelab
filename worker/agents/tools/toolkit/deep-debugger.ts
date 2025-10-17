@@ -1,13 +1,11 @@
 import { ToolDefinition } from '../types';
 import { StructuredLogger } from '../../../logger';
 import { CodingAgentInterface } from 'worker/agents/services/implementations/CodingAgent';
-import { DeepCodeDebugger } from 'worker/agents/assistants/codeDebugger';
 import { RenderToolCall } from '../../operations/UserConversationProcessor';
 
 export function createDeepDebuggerTool(
 	agent: CodingAgentInterface,
 	logger: StructuredLogger,
-	streamCb?: (message: string) => void,
 	toolRenderer?: RenderToolCall,
 ): ToolDefinition<
 	{ issue: string; focus_paths?: string[] },
@@ -29,38 +27,30 @@ export function createDeepDebuggerTool(
 			},
 		},
 		implementation: async ({ issue, focus_paths }: { issue: string; focus_paths?: string[] }) => {
-			try {
-				// Check if code generation is in progress
-				if (agent.isCodeGenerating()) {
-					logger.warn('Cannot start debugging: Code generation in progress');
-					return {
-						error: 'GENERATION_IN_PROGRESS: Code generation is currently running. Use wait_for_generation tool, then retry deep_debug.'
-					};
-				}
+			// Check if code generation is in progress
+			if (agent.isCodeGenerating()) {
+				logger.warn('Cannot start debugging: Code generation in progress');
+				return {
+					error: 'GENERATION_IN_PROGRESS: Code generation is currently running. Use wait_for_generation tool, then retry deep_debug.'
+				};
+			}
 
-				const operationOptions = agent.getOperationOptions();
-				const filesIndex = operationOptions.context.allFiles
-					.filter((f) =>
-						!focus_paths?.length ||
-						focus_paths.some((p) => f.filePath.includes(p)),
-					);
+			// Check if another debug session is running
+			if (agent.isDeepDebugging()) {
+				logger.warn('Cannot start debugging: Another debug session in progress');
+				return {
+					error: 'DEBUG_IN_PROGRESS: Another debug session is currently running. Use wait_for_debug tool, then retry deep_debug.'
+				};
+			}
 
-				const runtimeErrors = await agent.fetchRuntimeErrors(true);
-
-				const dbg = new DeepCodeDebugger(
-					operationOptions.env,
-					operationOptions.inferenceContext,
-				);
-				const out = await dbg.run(
-					{ issue },
-					{ filesIndex, agent, runtimeErrors },
-					streamCb ? (chunk) => streamCb(chunk) : undefined,
-					toolRenderer,
-				);
-				return { transcript: out };
-			} catch (e) {
-				logger.error('Deep debugger failed', e);
-				return { error: `Deep debugger failed: ${String(e)}` };
+			// Execute debug session - agent handles all logic internally
+			const result = await agent.executeDeepDebug(issue, focus_paths, toolRenderer);
+			
+			// Convert discriminated union to tool response format
+			if (result.success) {
+				return { transcript: result.transcript };
+			} else {
+				return { error: result.error };
 			}
 		},
 	};

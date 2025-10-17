@@ -3,6 +3,8 @@ import { Blueprint } from "worker/agents/schemas";
 import { ExecuteCommandsResponse, StaticAnalysisResponse, RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { ICodingAgent } from "../interfaces/ICodingAgent";
 import { OperationOptions } from "worker/agents/operations/common";
+import { RenderToolCall } from "worker/agents/operations/UserConversationProcessor";
+import { DeepDebugResult } from "worker/agents/core/types";
 
 /*
 * CodingAgentInterface - stub for passing to tool calls
@@ -83,5 +85,21 @@ export class CodingAgentInterface {
 
     waitForGeneration(): Promise<void> {
         return this.agentStub.waitForGeneration();
+    }
+
+    isDeepDebugging(): boolean {
+        return this.agentStub.isDeepDebugging();
+    }
+
+    waitForDeepDebug(): Promise<void> {
+        return this.agentStub.waitForDeepDebug();
+    }
+
+    executeDeepDebug(
+        issue: string,
+        focusPaths?: string[],
+        toolRenderer?: RenderToolCall
+    ): Promise<DeepDebugResult> {
+        return this.agentStub.executeDeepDebug(issue, focusPaths, toolRenderer);
     }
 }

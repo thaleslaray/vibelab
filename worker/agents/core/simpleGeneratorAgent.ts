@@ -14,7 +14,7 @@ import { MAX_DEPLOYMENT_RETRIES, PREVIEW_EXPIRED_ERROR, WebSocketMessageResponse
 import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage } from './websocket';
 import { createObjectLogger, StructuredLogger } from '../../logger';
 import { ProjectSetupAssistant } from '../assistants/projectsetup';
-import { UserConversationProcessor } from '../operations/UserConversationProcessor';
+import { UserConversationProcessor, RenderToolCall } from '../operations/UserConversationProcessor';
 import { FileManager } from '../services/implementations/FileManager';
 import { StateManager } from '../services/implementations/StateManager';
 // import { WebSocketBroadcaster } from '../services/implementations/WebSocketBroadcaster';
@@ -47,6 +47,9 @@ import { CodingAgentInterface } from '../services/implementations/CodingAgent';
 import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aigateway-proxy/controller';
 import { ImageType, uploadImage } from 'worker/utils/images';
 import { ConversationMessage, ConversationState } from '../inferutils/common';
+import { DeepCodeDebugger } from '../assistants/codeDebugger';
+import { IdGenerator } from '../utils/idGenerator';
+import { DeepDebugResult } from './types';
 
 interface WebhookPayload {
     event: {
@@ -106,6 +109,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     // These are temporary and will be lost if the DO is evicted
     private pendingUserImages: ProcessedImageAttachment[] = []
     private generationPromise: Promise<void> | null = null;
+    private deepDebugPromise: Promise<{ transcript: string } | { error: string }> | null = null;
     
     protected operations: Operations = {
         codeReview: new CodeReviewOperation(),
@@ -168,6 +172,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         shouldBeGenerating: false,
         reviewingInitiated: false,
         projectUpdatesAccumulator: [],
+        lastDeepDebugTranscript: null,
     };
 
     /*
@@ -842,6 +847,66 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
         // Transition to IDLE - generation complete
         return CurrentDevState.REVIEWING;
+    }
+
+    async executeDeepDebug(
+        issue: string,
+        focusPaths?: string[],
+        toolRenderer?: RenderToolCall
+    ): Promise<DeepDebugResult> {
+        
+        const debugPromise = (async () => {
+            try {
+                const previousTranscript = this.state.lastDeepDebugTranscript ?? undefined;
+                const operationOptions = this.getOperationOptions();
+                const filesIndex = operationOptions.context.allFiles
+                    .filter((f) =>
+                        !focusPaths?.length ||
+                        focusPaths.some((p) => f.filePath.includes(p)),
+                    );
+
+                const runtimeErrors = await this.fetchRuntimeErrors(true);
+
+                const dbg = new DeepCodeDebugger(
+                    operationOptions.env,
+                    operationOptions.inferenceContext,
+                );
+                // Create streaming callback using broadcast mechanism
+                const streamCallback = (chunk: string) => {
+                    this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                        message: chunk,
+                        conversationId: `deep-debug-${IdGenerator.generateConversationId()}`,
+                        isStreaming: true,
+                    });
+                };
+
+                const out = await dbg.run(
+                    { issue, previousTranscript },
+                    { filesIndex, agent: this.codingAgent, runtimeErrors },
+                    streamCallback,
+                    toolRenderer,
+                );
+
+                // Save transcript for next session
+                this.setState({
+                    ...this.state,
+                    lastDeepDebugTranscript: out,
+                });
+
+                return { success: true as const, transcript: out };
+            } catch (e) {
+                this.logger().error('Deep debugger failed', e);
+                return { success: false as const, error: `Deep debugger failed: ${String(e)}` };
+            } finally{
+                // Clear promise after completion
+                this.deepDebugPromise = null;
+            }
+        })();
+
+        // Store promise before awaiting
+        this.deepDebugPromise = debugPromise;
+
+        return await debugPromise;
     }
 
     /**
@@ -2156,6 +2221,21 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }
         } else {
             this.logger().error("No generation process found");
+        }
+    }
+
+    isDeepDebugging(): boolean {
+        return this.deepDebugPromise !== null;
+    }
+
+    async waitForDeepDebug(): Promise<void> {
+        if (this.deepDebugPromise) {
+            try {
+                await this.deepDebugPromise;
+                this.logger().info("Deep debug session completed successfully");
+            } catch (error) {
+                this.logger().error("Error during deep debug session:", error);
+            }
         }
     }
 

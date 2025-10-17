@@ -58,4 +58,6 @@ export interface CodeGenState {
     conversationMessages: ConversationMessage[];
     projectUpdatesAccumulator: string[];
     inferenceContext: InferenceContext;
+
+    lastDeepDebugTranscript: string | null;
 } 

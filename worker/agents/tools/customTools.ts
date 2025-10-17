@@ -18,7 +18,7 @@ import { createRegenerateFileTool } from './toolkit/regenerate-file';
 import { createWaitTool } from './toolkit/wait';
 import { createGetRuntimeErrorsTool } from './toolkit/get-runtime-errors';
 import { createWaitForGenerationTool } from './toolkit/wait-for-generation';
-import { RuntimeError } from 'worker/services/sandbox/sandboxTypes';
+import { createWaitForDebugTool } from './toolkit/wait-for-debug';
 
 export async function executeToolWithDefinition<TArgs, TResult>(
     toolDef: ToolDefinition<TArgs, TResult>,
@@ -37,7 +37,6 @@ export async function executeToolWithDefinition<TArgs, TResult>(
 export function buildTools(
     agent: CodingAgentInterface,
     logger: StructuredLogger,
-    streamCb?: (message: string) => void,
     toolRenderer?: RenderToolCall,
 ): ToolDefinition<any, any>[] {
     return [
@@ -47,10 +46,11 @@ export function buildTools(
         createGetLogsTool(agent, logger),
         createDeployPreviewTool(agent, logger),
         createWaitForGenerationTool(agent, logger),
+        createWaitForDebugTool(agent, logger),
         createRenameProjectTool(agent, logger),
         createAlterBlueprintTool(agent, logger),
         // Deep autonomous debugging assistant tool
-        createDeepDebuggerTool(agent, logger, streamCb, toolRenderer),
+        createDeepDebuggerTool(agent, logger, toolRenderer),
     ];
 }
 
