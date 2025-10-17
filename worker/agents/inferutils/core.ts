@@ -700,28 +700,8 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                 depth: newDepth
             };
             
-            // Filter out tools with empty/meaningless results to avoid duplicate responses
-            const executedCallsWithResults = executedToolCalls.filter(result => {
-                if (!result.result) return false;
-                
-                // Check if result is effectively empty
-                const stringResult = typeof result.result === 'string' 
-                    ? result.result 
-                    : JSON.stringify(result.result);
-                
-                // Skip if result is null, empty string, "done", or just whitespace
-                if (!stringResult || 
-                    stringResult === 'null' || 
-                    stringResult === '""' || 
-                    stringResult === 'done' ||
-                    stringResult.trim() === '') {
-                    console.log(`[TOOL_CALL_SKIP] Skipping redundant LLM call for tool '${result.name}' with empty result: ${stringResult}`);
-                    return false;
-                }
-                
-                return true;
-            });
-            console.log(`Tool calling depth: ${newDepth}/${MAX_TOOL_CALLING_DEPTH}, calls with meaningful results: ${executedCallsWithResults.length}/${executedToolCalls.length}`);
+            const executedCallsWithResults = executedToolCalls.filter(result => result.result);
+            console.log(`Tool calling depth: ${newDepth}/${MAX_TOOL_CALLING_DEPTH}`);
             
             if (executedCallsWithResults.length) {
                 if (schema && schemaName) {
