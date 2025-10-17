@@ -8,7 +8,7 @@ export type RegenerateFileArgs = {
 };
 
 export type RegenerateFileResult =
-	| { path: string; updatedPreview: string }
+	| { path: string; diff: string }
 	| ErrorResult;
 
 export function createRegenerateFileTool(
@@ -20,7 +20,9 @@ export function createRegenerateFileTool(
 		function: {
 			name: 'regenerate_file',
 			description:
-				'Apply a surgical fix to a file (search/replace style) using internal regeneration operation, then persist changes.',
+				`Autonomous AI agent that applies surgical fixes to code files. Takes file path and array of specific issues to fix. Returns diff showing changes made.
+
+CRITICAL: Provide detailed, specific issues - not vague descriptions. See system prompt for full usage guide. These would be implemented by an independent LLM AI agent`,
 			parameters: {
 				type: 'object',
 				properties: {

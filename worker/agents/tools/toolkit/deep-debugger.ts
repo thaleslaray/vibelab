@@ -1,12 +1,8 @@
 import { ToolDefinition } from '../types';
 import { StructuredLogger } from '../../../logger';
 import { CodingAgentInterface } from 'worker/agents/services/implementations/CodingAgent';
-import {
-	DeepCodeDebugger,
-	type FileIndexEntry,
-} from 'worker/agents/assistants/codeDebugger';
+import { DeepCodeDebugger } from 'worker/agents/assistants/codeDebugger';
 import { RenderToolCall } from '../../operations/UserConversationProcessor';
-import { ConversationMessage } from '../../inferutils/common';
 
 export function createDeepDebuggerTool(
 	agent: CodingAgentInterface,
@@ -15,14 +11,14 @@ export function createDeepDebuggerTool(
 	toolRenderer?: RenderToolCall,
 ): ToolDefinition<
 	{ issue: string; focus_paths?: string[] },
-	{ transcript: ConversationMessage[] } | { error: string }
+	{ transcript: string } | { error: string }
 > {
 	return {
 		type: 'function',
 		function: {
 			name: 'deep_debug',
 			description:
-				'Autonomous deep debugging assistant. Investigates runtime errors and static analysis, reads targeted files (relative paths), runs commands (in project root, no cd), and applies surgical fixes via regenerate_file. Returns a concise transcript.',
+				'Autonomous debugging assistant that investigates errors, reads files, and applies fixes. CANNOT run during code generation - will return GENERATION_IN_PROGRESS error if generation is active.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -34,36 +30,34 @@ export function createDeepDebuggerTool(
 		},
 		implementation: async ({ issue, focus_paths }: { issue: string; focus_paths?: string[] }) => {
 			try {
+				// Check if code generation is in progress
+				if (agent.isCodeGenerating()) {
+					logger.warn('Cannot start debugging: Code generation in progress');
+					return {
+						error: 'GENERATION_IN_PROGRESS: Code generation is currently running. Use wait_for_generation tool, then retry deep_debug.'
+					};
+				}
+
 				const operationOptions = agent.getOperationOptions();
-				const filesIndex: FileIndexEntry[] =
-					operationOptions.context.allFiles
-						.map((f) => ({
-							path: f.filePath,
-							purpose: f.filePurpose,
-							changes:
-								f.lastDiff ||
-								(Array.isArray(f.unmerged) && f.unmerged.length
-									? f.unmerged.join('\n')
-									: null),
-						}))
-						.filter(
-							(f) =>
-								!focus_paths?.length ||
-								focus_paths.some((p) => f.path.includes(p)),
-						);
+				const filesIndex = operationOptions.context.allFiles
+					.filter((f) =>
+						!focus_paths?.length ||
+						focus_paths.some((p) => f.filePath.includes(p)),
+					);
+
+				const runtimeErrors = await agent.fetchRuntimeErrors(true);
 
 				const dbg = new DeepCodeDebugger(
 					operationOptions.env,
 					operationOptions.inferenceContext,
 				);
-				await dbg.run(
+				const out = await dbg.run(
 					{ issue },
-					{ filesIndex, agent },
+					{ filesIndex, agent, runtimeErrors },
 					streamCb ? (chunk) => streamCb(chunk) : undefined,
 					toolRenderer,
 				);
-                const transcript = dbg.getTranscript();
-				return { transcript };
+				return { transcript: out };
 			} catch (e) {
 				logger.error('Deep debugger failed', e);
 				return { error: `Deep debugger failed: ${String(e)}` };
