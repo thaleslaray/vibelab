@@ -1,10 +1,13 @@
 import { ToolDefinition } from '../types';
 import { StructuredLogger } from '../../../logger';
 import { CodingAgentInterface } from 'worker/agents/services/implementations/CodingAgent';
+import { RenderToolCall } from 'worker/agents/operations/UserConversationProcessor';
 
 export function createDeepDebuggerTool(
 	agent: CodingAgentInterface,
 	logger: StructuredLogger,
+    toolRenderer: RenderToolCall,
+    streamCb: (chunk: string) => void,
 ): ToolDefinition<
 	{ issue: string; focus_paths?: string[] },
 	{ transcript: string } | { error: string }
@@ -42,7 +45,7 @@ export function createDeepDebuggerTool(
 			}
 
 			// Execute debug session - agent handles all logic internally
-			const result = await agent.executeDeepDebug(issue, focus_paths);
+			const result = await agent.executeDeepDebug(issue, toolRenderer, streamCb, focus_paths);
 			
 			// Convert discriminated union to tool response format
 			if (result.success) {
