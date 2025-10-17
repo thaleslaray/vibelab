@@ -1,5 +1,6 @@
 import type { WebSocket } from 'partysocket';
 import type { WebSocketMessage, BlueprintType, ConversationMessage } from '@/api-types';
+import { deduplicateMessages, isAssistantMessageDuplicate } from './deduplicate-messages';
 import { logger } from '@/utils/logger';
 import { getFileType } from '@/utils/string';
 import { getPreviewUrl } from '@/lib/utils';
@@ -253,7 +254,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'conversation_state': {
                 const { state } = message;
                 const history: ReadonlyArray<ConversationMessage> = state?.runningHistory ?? [];
-                logger.debug('Received conversation_state with messages:', history.length);
+                logger.debug('Received conversation_state with messages:', history.length, 'state:', state);
 
                 const restoredMessages: ChatMessage[] = [];
                 let currentAssistant: ChatMessage | null = null;
@@ -279,7 +280,8 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                             ? 'previous history was compacted' 
                             : (text || '');
                         
-                        if (currentAssistant) {
+                        // Only merge if same conversationId (continuation), otherwise create new
+                        if (currentAssistant && currentAssistant.conversationId === msg.conversationId) {
                             if (content) {
                                 currentAssistant.content += (currentAssistant.content ? '\n\n' : '') + content;
                             }
@@ -306,7 +308,10 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 }
 
                 if (restoredMessages.length > 0) {
-                    logger.debug('Merging conversation_state with', restoredMessages.length, 'messages');
+                    // Deduplicate assistant messages with identical content (even if separated by tool messages)
+                    const deduplicated = deduplicateMessages(restoredMessages);
+                    
+                    logger.debug('Merging conversation_state with', deduplicated.length, 'messages (', restoredMessages.length - deduplicated.length, 'duplicates removed)');
                     setMessages(prev => {
                         const hasFetching = prev.some(m => m.role === 'assistant' && m.conversationId === 'fetching-chat');
                         if (hasFetching) {
@@ -314,9 +319,9 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                                 name: 'fetching your latest conversations', 
                                 status: 'success' 
                             });
-                            return [...next, ...restoredMessages];
+                            return [...next, ...deduplicated];
                         }
-                        return restoredMessages;
+                        return deduplicated;
                     });
                 }
                 break;
@@ -693,7 +698,15 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 setMessages(prev => {
                     const idx = prev.findIndex(m => m.role === 'assistant' && m.conversationId === conversationId);
                     if (idx !== -1) return prev.map((m, i) => i === idx ? { ...m, content: (isArchive ? placeholder : message.message) } : m);
-                    return [...prev, createAIMessage(conversationId, isArchive ? placeholder : message.message)];
+                    
+                    // Deduplicate: Don't add if last assistant message has identical content
+                    const newContent = isArchive ? placeholder : message.message;
+                    if (isAssistantMessageDuplicate(prev, newContent)) {
+                        logger.debug('Skipping duplicate assistant message');
+                        return prev; // Skip duplicate
+                    }
+                    
+                    return [...prev, createAIMessage(conversationId, newContent)];
                 });
                 break;
             }

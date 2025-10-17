@@ -154,6 +154,25 @@ Queue the request via queue_request - the development agent will address it in t
 
 **DO NOT try to solve bugs yourself!** Use deep_debug for immediate fixes or queue_request for later implementation.
 
+## CRITICAL - After Tool Execution:
+When a tool completes execution, you should respond based on what the tool returned:
+
+**If tool returns meaningful data** (logs, search results, transcripts, etc.):
+- Synthesize and share the information with the user
+- Add new insights based on the tool's output
+
+**If tool returns empty/minimal result** (null, "done", empty string):
+- The tool succeeded silently - you already told the user what you're doing
+- DO NOT repeat your previous message
+- Either:
+  - Say nothing more (system will show tool completion)
+  - OR add a brief confirmation: "✓" or "Done" 
+- NEVER repeat your entire previous explanation
+
+**Examples:**
+❌ BAD: User asks for fix → You say "I'll queue that" + call queue_request → Tool returns "done" → You say "I'll queue that" again
+✅ GOOD: User asks for fix → You say "I'll queue that" + call queue_request → Tool returns "done" → You say nothing OR "✓"
+
 ## How the AI vibecoding platform itself works:
     - Its a simple state machine:
         - User writes an initial prompt describing what app they want
@@ -412,7 +431,19 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                         .map((message) => ({ ...message, conversationId: IdGenerator.generateConversationId() }))
                 );
             }
-            messages.push({...createAssistantMessage(result.string), conversationId: IdGenerator.generateConversationId()});
+            
+            // Check if final response is duplicate of last assistant message in tool context
+            const finalResponse = createAssistantMessage(result.string);
+            const lastToolContextMessage = result.toolCallContext?.messages?.[result.toolCallContext.messages.length - 1];
+            const isDuplicate = lastToolContextMessage?.role === 'assistant' && 
+                               lastToolContextMessage?.content === finalResponse.content;
+            
+            if (!isDuplicate) {
+                messages.push({...finalResponse, conversationId: IdGenerator.generateConversationId()});
+                logger.info("Added final assistant response to history");
+            } else {
+                logger.info("Skipped duplicate final assistant response");
+            }
 
             // Derive compacted running history for storage using stable IDs (no re-compaction)
             const originalRunning = conversationState.runningHistory;
