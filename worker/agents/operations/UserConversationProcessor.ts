@@ -109,6 +109,7 @@ const SYSTEM_PROMPT = `You are Orange, the conversational AI interface for Cloud
   - get_logs: Fetch unread application logs from the sandbox to diagnose runtime issues.
   - deep_debug: Autonomous debugging assistant that investigates errors, reads files, runs commands, and applies targeted fixes. Use when users report bugs/errors that need immediate investigation and fixing. This transfers control to a specialized debugging agent.
   - wait_for_generation: Wait for code generation to complete. Use when deep_debug returns GENERATION_IN_PROGRESS error.
+  - wait_for_debug: Wait for current debug session to complete. Use when deep_debug returns DEBUG_IN_PROGRESS error.
   - deploy_preview: Redeploy or restart the preview when the user asks to deploy or the preview is blank/looping.
   - clear_conversation: Clear the current chat history for this session.
   - rename_project: Rename the project (lowercase letters, numbers, hyphens, underscores; 3-50 chars).
@@ -140,6 +141,12 @@ When you call deep_debug, it runs to completion and returns a transcript. The us
 1. Tell user: "Code generation is in progress. Let me wait for it to complete..."
 2. Call wait_for_generation
 3. Retry deep_debug
+4. If it fails again, report the issue
+
+**CRITICAL - If deep_debug returns DEBUG_IN_PROGRESS error:**
+1. Tell user: "A debug session is running. Let me wait for it to complete..."
+2. Call wait_for_debug
+3. Retry deep_debug (it will have context from previous session)
 4. If it fails again, report the issue
 
 **Option 2 - For feature requests or non-urgent fixes:**
@@ -213,6 +220,7 @@ We have also recently added support for image inputs in beta. User can guide app
 - Sometimes your request might be lost. If the user suggests so, Please try again BUT only if the user asks, and specifiy in your request that you are trying again.
 - Always be concise, direct, to the point and brief to the user. You are a man of few words. Dont talk more than what's necessary to the user.
 - For persistent problems, actively use \`get_logs\` tool to fetch the latest server logs.
+- deep_debug tool is especially well suited for debugging and fixing issues like maximum update depth exceeded errors, or website not working/loading. Use it primarily for such issues
 
 You can also execute multiple tools in a sequence, for example, to search the web for an image, and then sending the image url to the queue_request tool to queue up the changes.
 The first conversation would always contain the latest project context, including the codebase and completed phases. Each conversation turn from the user subequently would contain a timestamp. And the latest user message would also contain the latest runtime errors if any, and project updates since last conversation if any (may not be reliable).
@@ -322,7 +330,6 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             const tools = buildTools(
                 agent,
                 logger,
-                (message: string) => inputs.conversationResponseCallback(message, aiConversationId, true),
                 toolCallRenderer,
             ).map(td => ({
                 ...td,

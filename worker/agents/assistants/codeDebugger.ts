@@ -247,15 +247,35 @@ You're done when:
 - No play-by-play narration - just execute
 - Quality through internal reasoning, not verbose output
 
-The goal is working code, verified through evidence. Think internally, act decisively.`;
+The goal is working code, verified through evidence. Think internally, act decisively.
+
+<appendix>
+The most important class of errors is the "Maximum update depth exceeded" error which you definitely need to identify and fix. 
+${PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION}
+
+${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
+</appendix>`;
 
 const USER_PROMPT = (
     issue: string, 
     fileSummaries: string, 
     templateInfo?: string, 
-    runtimeErrors?: string
+    runtimeErrors?: string,
+    previousTranscript?: string
 ) => `## Debugging Task
 **Issue to resolve:** ${issue}
+
+${previousTranscript ? `## Previous Debug Session Context
+A previous debug session was completed. Here's what was done:
+
+${previousTranscript}
+
+**IMPORTANT:** Use this context to:
+- Avoid redoing work already completed
+- Build on previous fixes
+- Reference previous findings if relevant
+- Continue from where the last session left off if this is a related issue
+` : ''}
 
 ## Project Context
 Below is metadata about the codebase. Use this to orient yourself, but read actual file contents when you need details.
@@ -280,7 +300,7 @@ These runtime errors were captured from the sandbox. Note that they may be a few
 ${runtimeErrors}` : ''}
 
 ## Your Mission
-Diagnose and fix this issue.
+Diagnose and fix all user issues.
 
 **Approach:**
 - Think deeply internally (you have high reasoning capability)
@@ -311,6 +331,7 @@ export type DebugSession = {
 
 export type DebugInputs = {
     issue: string;
+    previousTranscript?: string;
 };
 
 function summarizeFiles(files: FileState[], max = 120): string {
@@ -405,7 +426,13 @@ If you're genuinely stuck after trying 3 different approaches, honestly report: 
         
         const system = createSystemMessage(SYSTEM_PROMPT);
         const user = createUserMessage(
-            USER_PROMPT(inputs.issue, fileSummaries, templateInfo, session.runtimeErrors ? PROMPT_UTILS.serializeErrors(session.runtimeErrors) : undefined)
+            USER_PROMPT(
+                inputs.issue, 
+                fileSummaries, 
+                templateInfo, 
+                session.runtimeErrors ? PROMPT_UTILS.serializeErrors(session.runtimeErrors) : undefined,
+                inputs.previousTranscript
+            )
         );
         const messages: Message[] = this.save([system, user]);
 
