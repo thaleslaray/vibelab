@@ -118,8 +118,8 @@ export class DeepCodeDebugger extends Assistant<Env> {
 		const result = await executeInference({
 			env: this.env,
 			context: this.inferenceContext,
-			agentActionName: 'conversationalResponse',
-			modelConfig: this.modelConfigOverride || AGENT_CONFIG.codeReview,
+			agentActionName: 'deepDebugger',
+			modelConfig: this.modelConfigOverride || AGENT_CONFIG.deepDebugger,
 			messages,
 			tools,
 			stream: streamCb

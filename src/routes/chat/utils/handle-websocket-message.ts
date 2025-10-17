@@ -78,6 +78,9 @@ export interface HandleMessageDeps {
 }
 
 export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
+    // Track review lifecycle within this handler instance
+    let lastReviewIssueCount = 0;
+    let reviewStartAnnounced = false;
     const extractTextContent = (content: ConversationMessage['content']): string => {
         if (!content) return '';
         if (typeof content === 'string') return content;
@@ -252,34 +255,67 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 const history: ReadonlyArray<ConversationMessage> = state?.runningHistory ?? [];
                 logger.debug('Received conversation_state with messages:', history.length);
 
-                const restoredMessages: ChatMessage[] = history.reduce<ChatMessage[]>((acc, msg) => {
-                    if (msg.role !== 'user' && msg.role !== 'assistant') return acc;
+                const restoredMessages: ChatMessage[] = [];
+                let currentAssistant: ChatMessage | null = null;
+                
+                const ensureToolEvents = (assistant: ChatMessage) => {
+                    if (!assistant.ui) assistant.ui = { toolEvents: [] };
+                    if (!assistant.ui.toolEvents) assistant.ui.toolEvents = [];
+                };
+                
+                for (const msg of history) {
                     const text = extractTextContent(msg.content);
-                    if (!text || text.includes('<Internal Memo>')) return acc;
-
-                    const convId = msg.conversationId;
-                    const isArchive = msg.role === 'assistant' && convId.startsWith('archive-');
-
-                    acc.push({
-                        role: msg.role,
-                        conversationId: convId,
-                        content: isArchive ? 'previous history was compacted' : text,
-                    });
-                    return acc;
-                }, []);
+                    if (text?.includes('<Internal Memo>')) continue;
+                    
+                    if (msg.role === 'user') {
+                        restoredMessages.push({
+                            role: 'user',
+                            conversationId: msg.conversationId,
+                            content: text || '',
+                        });
+                        currentAssistant = null;
+                    } else if (msg.role === 'assistant') {
+                        const content = msg.conversationId.startsWith('archive-') 
+                            ? 'previous history was compacted' 
+                            : (text || '');
+                        
+                        if (currentAssistant) {
+                            if (content) {
+                                currentAssistant.content += (currentAssistant.content ? '\n\n' : '') + content;
+                            }
+                            if (msg.tool_calls?.length) ensureToolEvents(currentAssistant);
+                        } else {
+                            currentAssistant = {
+                                role: 'assistant',
+                                conversationId: msg.conversationId,
+                                content,
+                                ui: msg.tool_calls?.length ? { toolEvents: [] } : undefined,
+                            };
+                            restoredMessages.push(currentAssistant);
+                        }
+                    } else if (msg.role === 'tool' && 'name' in msg && msg.name && currentAssistant) {
+                        ensureToolEvents(currentAssistant);
+                        currentAssistant.ui!.toolEvents!.push({
+                            name: msg.name,
+                            status: 'success',
+                            timestamp: Date.now(),
+                            result: text || undefined,
+                            contentLength: currentAssistant.content.length,
+                        });
+                    }
+                }
 
                 if (restoredMessages.length > 0) {
-                    logger.debug('Merging conversation_state history with existing messages (preserving fetch indicator):', restoredMessages.length);
+                    logger.debug('Merging conversation_state with', restoredMessages.length, 'messages');
                     setMessages(prev => {
                         const hasFetching = prev.some(m => m.role === 'assistant' && m.conversationId === 'fetching-chat');
-                        let next = prev;
                         if (hasFetching) {
-                            // Mark fetching tool-event as completed
-                            next = appendToolEvent(next, 'fetching-chat', { name: 'fetching your latest conversations', status: 'success' });
-                            // Append restored messages after the fetch indicator
+                            const next = appendToolEvent(prev, 'fetching-chat', { 
+                                name: 'fetching your latest conversations', 
+                                status: 'success' 
+                            });
                             return [...next, ...restoredMessages];
                         }
-                        // Fallback: replace if no fetching indicator exists
                         return restoredMessages;
                     });
                 }
@@ -322,12 +358,17 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'file_regenerating': {
                 setFiles((prev) => setFileGenerating(prev, message.filePath, 'File being regenerated...'));
                 setPhaseTimeline((prev) => updatePhaseFileStatus(prev, message.filePath, 'generating'));
+                // Activates fixing stage only when actual regenerations begin
+                updateStage('fix', { status: 'active', metadata: lastReviewIssueCount > 0 ? `Fixing ${lastReviewIssueCount} issues` : 'Fixing issues' });
                 break;
             }
 
             case 'generation_started': {
                 updateStage('code', { status: 'active' });
                 setTotalFiles(message.totalFiles);
+                // Reset review tracking for a new generation run
+                lastReviewIssueCount = 0;
+                reviewStartAnnounced = false;
                 break;
             }
 
@@ -335,6 +376,8 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 setIsRedeployReady(true);
                 setFiles((prev) => setAllFilesCompleted(prev));
                 setProjectStages((prev) => completeStages(prev, ['code', 'validate', 'fix']));
+                // Ensure fix stage metadata is cleared on final completion
+                updateStage('fix', { status: 'completed', metadata: undefined });
 
                 sendMessage(createAIMessage('generation-complete', 'Code generation has been completed.'));
                 setIsPhaseProgressActive(false);
@@ -360,16 +403,20 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
             case 'code_reviewed': {
                 const reviewData = message.review;
-                const totalIssues = reviewData?.filesToFix?.reduce((count: number, file: any) => 
+                const totalIssues = reviewData?.filesToFix?.reduce((count: number, file: any) =>
                     count + file.issues.length, 0) || 0;
-                
+
+                lastReviewIssueCount = totalIssues;
+
                 let reviewMessage = 'Code review complete';
                 if (reviewData?.issuesFound) {
                     reviewMessage = `Code review complete - ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} found across ${reviewData.filesToFix?.length || 0} file${reviewData.filesToFix?.length !== 1 ? 's' : ''}`;
                 } else {
                     reviewMessage = 'Code review complete - no issues found';
                 }
-                
+
+                // Mark validation as completed at the end of review
+                updateStage('validate', { status: 'completed' });
                 sendMessage(createAIMessage('code_reviewed', reviewMessage));
                 break;
             }
@@ -391,19 +438,28 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     (message.staticAnalysis?.typecheck?.issues?.length || 0) +
                     (message.runtimeErrors.length || 0);
 
+                lastReviewIssueCount = totalIssues;
+
+                // Announce review start once, right after main code gen
+                if (!reviewStartAnnounced) {
+                    sendMessage(createAIMessage('review_start', 'App generation complete, now reviewing code indepth'));
+                    reviewStartAnnounced = true;
+                }
+
+                // Only show reviewing as active; do not activate fix until regeneration actually starts
                 updateStage('validate', { status: 'active' });
+                // Show identified issues count while review runs, but keep fix stage pending
+                updateStage('fix', { status: 'pending', metadata: totalIssues > 0 ? `Identified ${totalIssues} issues` : undefined });
 
                 if (totalIssues > 0) {
-                    updateStage('fix', { status: 'active', metadata: `Fixing ${totalIssues} issues` });
-                    
                     const errorDetails = [
                         `Lint Issues: ${JSON.stringify(message.staticAnalysis?.lint?.issues)}`,
                         `Type Errors: ${JSON.stringify(message.staticAnalysis?.typecheck?.issues)}`,
                         `Runtime Errors: ${JSON.stringify(message.runtimeErrors)}`,
                         `Client Errors: ${JSON.stringify(message.clientErrors)}`,
                     ].filter(Boolean).join('\n');
-                    
-                    onDebugMessage?.('warning', 
+
+                    onDebugMessage?.('warning',
                         `Generation Issues Found (${totalIssues} total)`,
                         errorDetails,
                         'Code Generation'
@@ -414,7 +470,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
             case 'phase_generating': {
                 updateStage('validate', { status: 'completed' });
-                updateStage('fix', { status: 'completed' });
+                updateStage('fix', { status: 'completed', metadata: undefined });
                 sendMessage(createAIMessage('phase_generating', message.message));
                 setIsThinking(true);
                 setIsPhaseProgressActive(true);

@@ -108,7 +108,7 @@ const SYSTEM_PROMPT = `You are Orange, the conversational AI interface for Cloud
   - deep_debug: Autonomous debugging assistant that investigates errors, reads files, runs commands, and applies targeted fixes. Use when users report bugs/errors that need immediate investigation and fixing. This transfers control to a specialized debugging agent.
   - deploy_preview: Redeploy or restart the preview when the user asks to deploy or the preview is blank/looping.
   - clear_conversation: Clear the current chat history for this session.
-  - rename_project: Rename the project (lowercase letters, numbers, hyphens, underscores; 3–50 chars).
+  - rename_project: Rename the project (lowercase letters, numbers, hyphens, underscores; 3-50 chars).
   - alter_blueprint: Patch the blueprint with allowed fields only (title, description, views, userFlow, frameworks, etc.).
   - web_search: Search the web for information.
   - feedback: Submit user feedback to the platform.
@@ -388,7 +388,6 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             if (result.toolCallContext?.messages && result.toolCallContext.messages.length > 0) {
                 messages.push(
                     ...result.toolCallContext.messages
-                        .filter((message) => !(message.role === 'assistant' && typeof(message.content) === 'string' && message.content.includes('Internal Memo')))
                         .map((message) => ({ ...message, conversationId: IdGenerator.generateConversationId() }))
                 );
             }

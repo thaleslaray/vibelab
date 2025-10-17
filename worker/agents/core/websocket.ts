@@ -218,6 +218,7 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
             case WebSocketMessageRequests.GET_CONVERSATION_STATE:
                 try {
                     const state = agent.getConversationState();
+                    logger.info('Conversation state retrieved', state);
                     sendToConnection(connection, WebSocketMessageResponses.CONVERSATION_STATE, { state });
                 } catch (error) {
                     logger.error('Error fetching conversation state:', error);

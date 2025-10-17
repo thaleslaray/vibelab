@@ -440,7 +440,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
     
     // Check tool calling depth to prevent infinite recursion
     const currentDepth = toolCallContext?.depth ?? 0;
-    if (currentDepth >= MAX_TOOL_CALLING_DEPTH) {
+    if (currentDepth >= MAX_TOOL_CALLING_DEPTH && actionKey !== 'deepDebugger') {
         console.warn(`Tool calling depth limit reached (${currentDepth}/${MAX_TOOL_CALLING_DEPTH}). Stopping recursion.`);
         // Return a response indicating max depth reached
         if (schema) {

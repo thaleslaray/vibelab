@@ -6,6 +6,8 @@ export type ToolEvent = {
     name: string;
     status: 'start' | 'success' | 'error';
     timestamp: number;
+    contentLength?: number; // Position in content when event was added (for inline rendering)
+    result?: string; // Tool execution result (for completed tools)
 };
 
 export type ChatMessage = Omit<ConversationMessage, 'content'> & {
@@ -145,9 +147,10 @@ export function handleStreamingMessage(
 }
 
 /**
- * Append or update a tool event inline within an AI message bubble
- * - If a message with messageId doesn't exist yet, create a placeholder AI message with empty content
- * - If a matching 'start' exists and a 'success' comes in for the same tool, update that entry in place
+ * Append or update a tool event
+ * - Tool 'start': Add with current position for inline rendering
+ * - Tool 'success': Update matching 'start' to 'success' in place OR add new success event if content changed
+ * - Tool 'error': Add error event with position for inline rendering
  */
 export function appendToolEvent(
     messages: ChatMessage[],
@@ -163,33 +166,104 @@ export function appendToolEvent(
             role: 'assistant',
             conversationId,
             content: '',
-            ui: { toolEvents: [{ name: tool.name, status: tool.status, timestamp }] },
+            ui: {
+                toolEvents: [{
+                    name: tool.name,
+                    status: tool.status,
+                    timestamp,
+                    contentLength: 0
+                }]
+            },
         };
         return [...messages, newMsg];
     }
 
     return messages.map((m, i) => {
         if (i !== idx) return m;
+        
         const current = m.ui?.toolEvents ?? [];
+        const currentContentLength = m.content.length;
+        
+        if (tool.status === 'start') {
+            // Add new tool start event with current position
+            return {
+                ...m,
+                ui: {
+                    ...m.ui,
+                    toolEvents: [...current, {
+                        name: tool.name,
+                        status: 'start',
+                        timestamp,
+                        contentLength: currentContentLength
+                    }]
+                }
+            };
+        }
+        
         if (tool.status === 'success') {
-            // Find last 'start' for this tool and flip it to success
-            for (let j = current.length - 1; j >= 0; j--) {
-                if (current[j].name === tool.name) {
+            // Find the matching 'start' event
+            const startEventIndex = current.findIndex(ev => ev.name === tool.name && ev.status === 'start');
+            
+            if (startEventIndex !== -1) {
+                const startEvent = current[startEventIndex];
+                
+                // If no content after start, update in place
+                if (startEvent.contentLength === currentContentLength) {
                     return {
                         ...m,
                         ui: {
                             ...m.ui,
-                            toolEvents: current.map((ev, k) =>
-                                k === j ? { ...ev, status: 'success', timestamp } : ev
-                            ),
+                            toolEvents: current.map((ev, j) =>
+                                j === startEventIndex
+                                    ? { name: ev.name, status: 'success' as const, timestamp, contentLength: currentContentLength }
+                                    : ev
+                            )
                         }
                     };
                 }
+                
+                // Content changed, add new success event at current position
+                return {
+                    ...m,
+                    ui: {
+                        ...m.ui,
+                        toolEvents: [...current, {
+                            name: tool.name,
+                            status: 'success',
+                            timestamp,
+                            contentLength: currentContentLength
+                        }]
+                    }
+                };
             }
-            // If no prior start, just append success as a separate line
-            return { ...m, ui: { ...m.ui, toolEvents: [...current, { name: tool.name, status: 'success', timestamp }] } };
+            
+            // No prior start found, just add success event with position
+            return {
+                ...m,
+                ui: {
+                    ...m.ui,
+                    toolEvents: [...current, {
+                        name: tool.name,
+                        status: 'success',
+                        timestamp,
+                        contentLength: currentContentLength
+                    }]
+                }
+            };
         }
-        // Default: append event
-        return { ...m, ui: { ...m.ui, toolEvents: [...current, { name: tool.name, status: tool.status, timestamp }] } };
+        
+        // Error status - add with position for inline rendering
+        return {
+            ...m,
+            ui: {
+                ...m.ui,
+                toolEvents: [...current, {
+                    name: tool.name,
+                    status: 'error',
+                    timestamp,
+                    contentLength: currentContentLength
+                }]
+            }
+        };
     });
 }

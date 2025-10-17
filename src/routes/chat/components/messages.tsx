@@ -3,8 +3,9 @@ import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeExternalLinks from 'rehype-external-links';
-import { LoaderCircle, Check, AlertTriangle } from 'lucide-react';
+import { LoaderCircle, Check, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import type { ToolEvent } from '../utils/message-helpers';
+import { useState } from 'react';
 
 /**
  * Strip internal system tags that should not be displayed to users
@@ -32,16 +33,137 @@ export function UserMessage({ message }: { message: string }) {
 	);
 }
 
+type ContentItem = 
+	| { type: 'text'; content: string; key: string }
+	| { type: 'tool'; event: ToolEvent; key: string };
+
+function JsonRenderer({ data }: { data: unknown }) {
+	if (typeof data !== 'object' || data === null) {
+		return <span className="text-text-primary whitespace-pre-wrap">{String(data)}</span>;
+	}
+
+	return (
+		<div className="flex flex-col gap-1">
+			{Object.entries(data).map(([key, value]) => (
+				<div key={key} className="flex gap-2">
+					<span className="text-accent font-medium flex-shrink-0">{key}:</span>
+					{typeof value === 'object' && value !== null ? (
+						<div className="flex-1">
+							<JsonRenderer data={value} />
+						</div>
+					) : (
+						<span className="text-text-primary flex-1 whitespace-pre-wrap break-words">
+							{String(value)}
+						</span>
+					)}
+				</div>
+			))}
+		</div>
+	);
+}
+
+function ToolResultRenderer({ result }: { result: string }) {
+	try {
+		const parsed = JSON.parse(result);
+		return <JsonRenderer data={parsed} />;
+	} catch {
+		return <div className="whitespace-pre-wrap break-words">{result}</div>;
+	}
+}
+
+function ToolStatusIndicator({ event }: { event: ToolEvent }) {
+	const [isExpanded, setIsExpanded] = useState(false);
+	const hasResult = event.status === 'success' && event.result;
+	
+	const statusText = event.status === 'start' ? 'Running' : 
+	                   event.status === 'success' ? 'Completed' : 
+	                   'Error';
+	
+	const StatusIcon = event.status === 'start' ? LoaderCircle : 
+	                   event.status === 'success' ? Check : 
+	                   AlertTriangle;
+	
+	const iconClass = event.status === 'start' ? 'size-3 animate-spin' : 'size-3';
+	
+	return (
+		<div className="flex flex-col gap-2">
+			<button
+				onClick={() => hasResult && setIsExpanded(!isExpanded)}
+				className={clsx(
+					'flex items-center gap-1.5 text-xs text-text-tertiary',
+					hasResult && 'cursor-pointer hover:text-text-secondary transition-colors'
+				)}
+				disabled={!hasResult}
+			>
+				<StatusIcon className={iconClass} />
+				<span className="font-mono tracking-tight">
+					{statusText} {event.name}
+				</span>
+				{hasResult && (
+					isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
+				)}
+			</button>
+			
+			{isExpanded && hasResult && event.result && (
+				<div className="p-3 rounded-md bg-surface-secondary text-xs font-mono border border-border overflow-auto max-h-96">
+					<ToolResultRenderer result={event.result} />
+				</div>
+			)}
+		</div>
+	);
+}
+
+function buildOrderedContent(message: string, inlineToolEvents: ToolEvent[]): ContentItem[] {
+	if (!inlineToolEvents.length) {
+		return message ? [{ type: 'text', content: message, key: 'content-0' }] : [];
+	}
+
+	const items: ContentItem[] = [];
+	let lastPos = 0;
+	
+	for (const event of inlineToolEvents) {
+		const pos = event.contentLength ?? 0;
+		
+		// Add text before this event
+		if (pos > lastPos && message.slice(lastPos, pos)) {
+			items.push({ type: 'text', content: message.slice(lastPos, pos), key: `text-${lastPos}` });
+		}
+		
+		// Add event
+		items.push({ type: 'tool', event, key: `tool-${event.timestamp}` });
+		lastPos = pos;
+	}
+	
+	// Add remaining text
+	if (lastPos < message.length && message.slice(lastPos)) {
+		items.push({ type: 'text', content: message.slice(lastPos), key: `text-${lastPos}` });
+	}
+	
+	return items;
+}
+
 export function AIMessage({
 	message,
 	isThinking,
-	toolEvents,
+	toolEvents = [],
 }: {
 	message: string;
 	isThinking?: boolean;
 	toolEvents?: ToolEvent[];
 }) {
 	const sanitizedMessage = sanitizeMessageForDisplay(message);
+	
+	// Separate: events without contentLength = top (restored), with contentLength = inline (streaming)
+	const topToolEvents = toolEvents.filter(ev => ev.contentLength === undefined);
+	const inlineToolEvents = toolEvents.filter(ev => ev.contentLength !== undefined)
+		.sort((a, b) => (a.contentLength ?? 0) - (b.contentLength ?? 0));
+	
+	const orderedContent = buildOrderedContent(sanitizedMessage, inlineToolEvents);
+	
+	// Don't render if completely empty
+	if (!sanitizedMessage && !topToolEvents.length && !orderedContent.length) {
+		return null;
+	}
 	
 	return (
 		<div className="flex gap-3">
@@ -50,32 +172,32 @@ export function AIMessage({
 			</div>
 			<div className="flex flex-col gap-2 min-w-0">
 				<div className="font-mono font-medium text-text-50">Orange</div>
-				{toolEvents && toolEvents.length > 0 && (
-					<div className="mb-1.5 flex flex-col gap-1">
-						{toolEvents.map((ev) => (
-							<div
-								key={`${ev.name}-${ev.timestamp}`}
-								className="flex items-center gap-1.5 text-xs text-text-tertiary"
-							>
-								{ev.status === 'start' && (
-									<LoaderCircle className="size-3 animate-spin" />
-								)}
-								{ev.status === 'success' && <Check className="size-3" />}
-								{ev.status === 'error' && <AlertTriangle className="size-3" />}
-								<span className="font-mono tracking-tight">
-									{ev.status === 'start' && 'Running'}
-									{ev.status === 'success' && 'Completed'}
-									{ev.status === 'error' && 'Error'}
-									{' '}
-									{ev.name}
-								</span>
-							</div>
+				
+				{/* Message content with inline tool events (from streaming) */}
+				{orderedContent.length > 0 && (
+					<div className="flex flex-col gap-2">
+						{orderedContent.map((item) => (
+							item.type === 'text' ? (
+								<Markdown key={item.key} className={clsx('a-tag', isThinking && 'animate-pulse')}>
+									{item.content}
+								</Markdown>
+							) : (
+								<div key={item.key} className="my-1">
+									<ToolStatusIndicator event={item.event} />
+								</div>
+							)
 						))}
 					</div>
 				)}
-				<Markdown className={clsx('a-tag', isThinking ? 'animate-pulse' : '')}>
-					{sanitizedMessage}
-				</Markdown>
+				
+				{/* Completed tools (from restoration) - shown at end */}
+				{topToolEvents.length > 0 && (
+					<div className="flex flex-col gap-1.5 mt-1">
+						{topToolEvents.map((ev) => (
+							<ToolStatusIndicator key={`${ev.name}-${ev.timestamp}`} event={ev} />
+						))}
+					</div>
+				)}
 			</div>
 		</div>
 	);
