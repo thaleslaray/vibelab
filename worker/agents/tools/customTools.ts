@@ -37,6 +37,8 @@ export async function executeToolWithDefinition<TArgs, TResult>(
 export function buildTools(
     agent: CodingAgentInterface,
     logger: StructuredLogger,
+    toolRenderer: RenderToolCall,
+    streamCb: (chunk: string) => void,
 ): ToolDefinition<any, any>[] {
     return [
         toolWebSearchDefinition,
@@ -49,7 +51,7 @@ export function buildTools(
         createRenameProjectTool(agent, logger),
         createAlterBlueprintTool(agent, logger),
         // Deep autonomous debugging assistant tool
-        createDeepDebuggerTool(agent, logger),
+        createDeepDebuggerTool(agent, logger, toolRenderer, streamCb),
     ];
 }
 

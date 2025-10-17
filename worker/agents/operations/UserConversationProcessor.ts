@@ -135,7 +135,22 @@ Use the deep_debug tool to investigate and fix bugs immediately. This synchronou
 - Apply surgical fixes
 - Stream progress directly to the user
 
-When you call deep_debug, it runs to completion and returns a transcript. The user will see all the debugging steps in real-time. After it returns, you can acknowledge completion: "The debugging session is complete. The issue should be resolved."
+When you call deep_debug, it runs to completion and returns a transcript. The user will see all the debugging steps in real-time.
+
+**CRITICAL - After deep_debug completes:**
+- **If transcript contains "TASK_COMPLETE" AND runtime errors show "N/A":**
+  - ✅ Acknowledge success: "The debugging session successfully resolved the [specific issue]."
+  - ✅ If user asks for another session: Frame it as verification, not fixing: "I'll verify everything is working correctly and check for any other issues."
+  - ❌ DON'T say: "fix remaining issues" or "problems that weren't fully resolved" - this misleads the user
+  - ❌ DON'T reference past failed attempts when the issue is now fixed
+  
+- **If transcript shows incomplete work or errors persist:**
+  - Acknowledge what was attempted and what remains
+  - Be specific about next steps
+
+**Examples:**
+❌ BAD (after successful fix): "I'll debug any remaining issues that might not have been fully resolved"
+✅ GOOD (after successful fix): "The previous session fixed the issue. I'll verify everything is stable and check for any new issues."
 
 **CRITICAL - If deep_debug returns GENERATION_IN_PROGRESS error:**
 1. Tell user: "Code generation is in progress. Let me wait for it to complete..."
@@ -349,6 +364,8 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             const tools = buildTools(
                 agent,
                 logger,
+                toolCallRenderer,
+                (chunk: string) => inputs.conversationResponseCallback(chunk, aiConversationId, true)    
             ).map(td => ({
                 ...td,
                 onStart: (args: Record<string, unknown>) => toolCallRenderer({ name: td.function.name, status: 'start', args }),

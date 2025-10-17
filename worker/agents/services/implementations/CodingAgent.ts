@@ -4,6 +4,7 @@ import { ExecuteCommandsResponse, StaticAnalysisResponse, RuntimeError } from "w
 import { ICodingAgent } from "../interfaces/ICodingAgent";
 import { OperationOptions } from "worker/agents/operations/common";
 import { DeepDebugResult } from "worker/agents/core/types";
+import { RenderToolCall } from "worker/agents/operations/UserConversationProcessor";
 
 /*
 * CodingAgentInterface - stub for passing to tool calls
@@ -22,8 +23,8 @@ export class CodingAgentInterface {
         return this.agentStub.fetchRuntimeErrors(clear);
     }
 
-    async deployPreview(): Promise<string> {
-        const response = await this.agentStub.deployToSandbox([], false);
+    async deployPreview(clearLogs: boolean = true): Promise<string> {
+        const response = await this.agentStub.deployToSandbox([], false, undefined, clearLogs);
         if (response && response.previewURL) {
             return `Deployment successful: ${response.previewURL}`;
         } else {
@@ -96,8 +97,10 @@ export class CodingAgentInterface {
 
     executeDeepDebug(
         issue: string,
+        toolRenderer: RenderToolCall,
+        streamCb: (chunk: string) => void,
         focusPaths?: string[],
     ): Promise<DeepDebugResult> {
-        return this.agentStub.executeDeepDebug(issue, focusPaths);
+        return this.agentStub.executeDeepDebug(issue, toolRenderer, streamCb, focusPaths);
     }
 }

@@ -14,7 +14,7 @@ import { MAX_DEPLOYMENT_RETRIES, PREVIEW_EXPIRED_ERROR, WebSocketMessageResponse
 import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage } from './websocket';
 import { createObjectLogger, StructuredLogger } from '../../logger';
 import { ProjectSetupAssistant } from '../assistants/projectsetup';
-import { UserConversationProcessor, buildToolCallRenderer } from '../operations/UserConversationProcessor';
+import { UserConversationProcessor, RenderToolCall } from '../operations/UserConversationProcessor';
 import { FileManager } from '../services/implementations/FileManager';
 import { StateManager } from '../services/implementations/StateManager';
 // import { WebSocketBroadcaster } from '../services/implementations/WebSocketBroadcaster';
@@ -850,6 +850,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     async executeDeepDebug(
         issue: string,
+        toolRenderer: RenderToolCall,
+        streamCb: (chunk: string) => void,
         focusPaths?: string[],
     ): Promise<DeepDebugResult> {
         
@@ -869,20 +871,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     operationOptions.env,
                     operationOptions.inferenceContext,
                 );
-                // Create streaming callback using broadcast mechanism
-                const streamCallback = (chunk: string) => {
-                    this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
-                        message: chunk,
-                        conversationId: dbg.getConversationId(),
-                        isStreaming: true,
-                    });
-                };
-                const toolCallRenderer = buildToolCallRenderer(streamCallback, dbg.getConversationId());
+
                 const out = await dbg.run(
                     { issue, previousTranscript },
                     { filesIndex, agent: this.codingAgent, runtimeErrors },
-                    streamCallback,
-                    toolCallRenderer,
+                    streamCb,
+                    toolRenderer,
                 );
 
                 // Save transcript for next session
@@ -1466,19 +1460,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             const resp = await this.getSandboxServiceClient().getInstanceErrors(this.state.sandboxInstanceId);
             if (!resp || !resp.success) {
                 this.logger().error(`Failed to fetch runtime errors: ${resp?.error || 'Unknown error'}, Will initiate redeploy`);
-                // Initiate redeploy
                 this.deployToSandbox();
                 return [];
             }
             
             const errors = resp?.errors || [];
-
-            if (errors.filter(error => error.message.includes('Unterminated string in JSON at position')).length > 0) {
-                this.logger().error('Unterminated string in JSON at position, will initiate redeploy');
-                // Initiate redeploy
-                this.deployToSandbox();
-                return [];
-            }
             
             if (errors.length > 0) {
                 this.logger().info(`Found ${errors.length} runtime errors: ${errors.map(e => e.message).join(', ')}`);
@@ -1839,7 +1825,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info("Waiting for preview completed");
     }
 
-    async deployToSandbox(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string): Promise<PreviewType | null> {
+    async deployToSandbox(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, clearLogs: boolean = false): Promise<PreviewType | null> {
         // If there's already a deployment in progress, wait for it to complete
         if (this.currentDeploymentPromise) {
             this.logger().info('Deployment already in progress, waiting for completion');
@@ -1859,7 +1845,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info("Deploying to sandbox", { files, redeploy, commitMessage, sessionId: this.state.sessionId });
     
         // Start the actual deployment and track it
-        this.currentDeploymentPromise = this.executeDeployment(files, redeploy, commitMessage);
+        this.currentDeploymentPromise = this.executeDeployment(files, redeploy, commitMessage, clearLogs);
         
         // Create timeout that resets session if deployment hangs
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -2025,7 +2011,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         };
     }
 
-    private async executeDeployment(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, retries: number = MAX_DEPLOYMENT_RETRIES): Promise<PreviewType | null> {
+    private async executeDeployment(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, clearLogs: boolean = false, retries: number = MAX_DEPLOYMENT_RETRIES): Promise<PreviewType | null> {
         try {
             this.broadcast(WebSocketMessageResponses.DEPLOYMENT_STARTED, {
                 message: "Deploying code to sandbox service",
@@ -2061,6 +2047,18 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     throw new Error(`File writing failed. Error: ${writeResponse?.error}`);
                 }
             }
+            if (clearLogs) {
+                try {
+                    this.logger().info('Clearing logs and runtime errors for instance', { instanceId: sandboxInstanceId });
+                    await Promise.all([
+                        this.getSandboxServiceClient().getLogs(sandboxInstanceId, true),
+                        this.getSandboxServiceClient().clearInstanceErrors(sandboxInstanceId)
+                    ]);
+                } catch (error) {
+                    this.logger().error('Failed to clear logs and runtime errors', error);
+                }
+            }
+
 
             const preview = {
                 runId: sandboxInstanceId,
@@ -2092,7 +2090,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 });
                 // Wait for exponential backoff
                 await new Promise(resolve => setTimeout(resolve, Math.pow(2, MAX_DEPLOYMENT_RETRIES - retries) * 1000));
-                return this.executeDeployment(files, redeploy, commitMessage, retries - 1);
+                return this.executeDeployment(files, redeploy, commitMessage, clearLogs, retries - 1);
             }
             this.broadcast(WebSocketMessageResponses.DEPLOYMENT_FAILED, {
                 error: `Error deploying to sandbox service: ${errorMsg}. Please report an issue if this persists`,
