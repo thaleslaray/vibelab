@@ -320,6 +320,7 @@ type ConversationResponseMessage = {
 		name: string;
 		status: 'start' | 'success' | 'error';
 		args?: Record<string, unknown>;
+		result?: string;
 	};
 };
 

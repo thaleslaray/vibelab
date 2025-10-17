@@ -149,13 +149,13 @@ export function handleStreamingMessage(
 /**
  * Append or update a tool event
  * - Tool 'start': Add with current position for inline rendering
- * - Tool 'success': Update matching 'start' to 'success' in place OR add new success event if content changed
+ * - Tool 'success': Update matching 'start' to 'success' in place (always updates, never adds new)
  * - Tool 'error': Add error event with position for inline rendering
  */
 export function appendToolEvent(
     messages: ChatMessage[],
     conversationId: string,
-    tool: { name: string; status: 'start' | 'success' | 'error' }
+    tool: { name: string; status: 'start' | 'success' | 'error'; result?: string }
 ): ChatMessage[] {
     const idx = messages.findIndex(m => m.conversationId === conversationId && m.role === 'assistant');
     const timestamp = Date.now();
@@ -206,33 +206,47 @@ export function appendToolEvent(
             
             if (startEventIndex !== -1) {
                 const startEvent = current[startEventIndex];
+                const contentChanged = startEvent.contentLength !== currentContentLength;
+                const isDeepDebug = tool.name === 'deep_debug';
                 
-                // If no content after start, update in place
-                if (startEvent.contentLength === currentContentLength) {
+                // For deep_debug with content changes: add new success event at end (chronological)
+                // For other tools: update in place (avoid duplication)
+                if (isDeepDebug && contentChanged) {
+                    // Remove start event and add success event at current position
                     return {
                         ...m,
                         ui: {
                             ...m.ui,
-                            toolEvents: current.map((ev, j) =>
-                                j === startEventIndex
-                                    ? { name: ev.name, status: 'success' as const, timestamp, contentLength: currentContentLength }
-                                    : ev
-                            )
+                            toolEvents: [
+                                ...current.filter((_, j) => j !== startEventIndex),
+                                {
+                                    name: tool.name,
+                                    status: 'success' as const,
+                                    timestamp,
+                                    contentLength: currentContentLength,
+                                    result: tool.result
+                                }
+                            ]
                         }
                     };
                 }
                 
-                // Content changed, add new success event at current position
+                // Update in place for other tools or when no content changed
                 return {
                     ...m,
                     ui: {
                         ...m.ui,
-                        toolEvents: [...current, {
-                            name: tool.name,
-                            status: 'success',
-                            timestamp,
-                            contentLength: currentContentLength
-                        }]
+                        toolEvents: current.map((ev, j) =>
+                            j === startEventIndex
+                                ? { 
+                                    name: ev.name, 
+                                    status: 'success' as const, 
+                                    timestamp: startEvent.timestamp, // Keep original timestamp for stable React key
+                                    contentLength: ev.contentLength, // Keep original position
+                                    result: tool.result // Add result if provided
+                                  }
+                                : ev
+                        )
                     }
                 };
             }
@@ -246,7 +260,8 @@ export function appendToolEvent(
                         name: tool.name,
                         status: 'success',
                         timestamp,
-                        contentLength: currentContentLength
+                        contentLength: currentContentLength,
+                        result: tool.result
                     }]
                 }
             };

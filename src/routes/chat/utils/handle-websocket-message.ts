@@ -677,7 +677,11 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
                 if (message.tool) {
                     const tool = message.tool;
-                    setMessages(prev => appendToolEvent(prev, conversationId, { name: tool.name, status: tool.status }));
+                    setMessages(prev => appendToolEvent(prev, conversationId, { 
+                        name: tool.name, 
+                        status: tool.status,
+                        result: tool.result 
+                    }));
                     break;
                 }
 
