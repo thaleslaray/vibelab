@@ -105,6 +105,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     // In-memory storage for user-uploaded images (not persisted in DO state)
     // These are temporary and will be lost if the DO is evicted
     private pendingUserImages: ProcessedImageAttachment[] = []
+    private generationPromise: Promise<void> | null = null;
     
     protected operations: Operations = {
         codeReview: new CodeReviewOperation(),
@@ -115,8 +116,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         fastCodeFixer: new FastCodeFixerOperation(),
         processUserMessage: new UserConversationProcessor()
     };
-
-    isGenerating: boolean = false;
     
     // Deployment queue management to prevent concurrent deployments
     private currentDeploymentPromise: Promise<PreviewType | null> | null = null;
@@ -153,7 +152,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         generatedPhases: [],
         generatedFilesMap: {},
         agentMode: 'deterministic',
-        generationPromise: undefined,
         sandboxInstanceId: undefined,
         templateDetails: {} as TemplateDetails,
         commandsHistory: [],
@@ -396,7 +394,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     isCodeGenerating(): boolean {
-        return this.isGenerating;
+        return this.generationPromise !== null;
     }
 
     rechargePhasesCounter(max_phases: number = MAX_PHASES): void {
@@ -491,12 +489,15 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info("Code generation already completed and no user inputs pending");
             return;
         }
-        if (this.isGenerating) {
+        if (this.isCodeGenerating()) {
             this.logger().info("Code generation already in progress");
             return;
         }
-        this.isGenerating = true;
+        this.generationPromise = this.launchStateMachine(reviewCycles);
+        await this.generationPromise;
+    }
 
+    private async launchStateMachine(reviewCycles: number) {
         this.broadcast(WebSocketMessageResponses.GENERATION_STARTED, {
             message: 'Starting code generation',
             totalFiles: this.getTotalFiles()
@@ -575,7 +576,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     status: 'completed',
                 }
             );
-            this.isGenerating = false;
+            this.generationPromise = null;
             this.broadcast(WebSocketMessageResponses.GENERATION_COMPLETE, {
                 message: "Code generation and review process completed.",
                 instanceId: this.state.sandboxInstanceId,
@@ -1156,15 +1157,15 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.getOperationOptions()
         );
 
-        this.fileManager.saveGeneratedFile(result);
+        const fileState = this.fileManager.saveGeneratedFile(result);
 
         this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
             message: `Regenerated file: ${file.filePath}`,
-            file: result,
+            file: fileState,
             original_issues: issues,
         });
         
-        return result;
+        return fileState;
     }
 
     getTotalFiles(): number {
@@ -1734,7 +1735,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return await this.getSandboxServiceClient().executeCommands(sandboxInstanceId, commands, timeout);
     }
 
-    async regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; updatedPreview: string }> {
+    async regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }> {
         const { sandboxInstanceId } = this.state;
         if (!sandboxInstanceId) {
             throw new Error('No sandbox instance available');
@@ -1760,7 +1761,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         const regenerated = await this.regenerateFile({ filePath: path, fileContents, filePurpose }, issues, 0);
         // Persist to sandbox instance
         await this.getSandboxServiceClient().writeFiles(sandboxInstanceId, [{ filePath: regenerated.filePath, fileContents: regenerated.fileContents }], `Deep debugger fix: ${path}`);
-        return { path, updatedPreview: regenerated.fileContents.slice(0, 4000) };
+        return { path, diff: regenerated.lastDiff };
     }
 
     async waitForPreview(): Promise<void> {
@@ -2146,9 +2147,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     async waitForGeneration(): Promise<void> {
-        if (this.state.generationPromise) {
+        if (this.generationPromise) {
             try {
-                await this.state.generationPromise;
+                await this.generationPromise;
                 this.logger().info("Code generation completed successfully");
             } catch (error) {
                 this.logger().error("Error during code generation:", error);
@@ -2442,8 +2443,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
     }
 
-    async getLogs(_reset?: boolean): Promise<string> {
-        const response = await this.getSandboxServiceClient().getLogs(this.state.sandboxInstanceId!);
+    async getLogs(_reset?: boolean, durationSeconds?: number): Promise<string> {
+        const response = await this.getSandboxServiceClient().getLogs(this.state.sandboxInstanceId!, _reset, durationSeconds);
         if (response.success) {
             return `STDOUT: ${response.logs.stdout}\nSTDERR: ${response.logs.stderr}`;
         } else {
@@ -2620,7 +2621,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             const { conversationResponse, conversationState } = conversationalResponse;
             this.setConversationState(conversationState);
 
-             if (!this.isGenerating) {
+             if (!this.generationPromise) {
                 // If idle, start generation process
                 this.logger().info('User input during IDLE state, starting generation');
                 this.generateAllFiles().catch(error => {

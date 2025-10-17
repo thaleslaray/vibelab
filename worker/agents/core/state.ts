@@ -33,7 +33,6 @@ export interface CodeGenState {
     blueprint: Blueprint;
     query: string;
     generatedFilesMap: Record<string, FileState >;
-    generationPromise?: Promise<void>;
     generatedPhases: PhaseState[];
     commandsHistory?: string[]; // History of commands run
     lastPackageJson?: string; // Last package.json file contents

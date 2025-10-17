@@ -21,7 +21,7 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                 });
                 
                 // Check if generation is already active to avoid duplicate processes
-                if (agent.isGenerating) {
+                if (agent.isCodeGenerating()) {
                     logger.info('Generation already in progress, skipping duplicate request');
                     // sendToConnection(connection, WebSocketMessageResponses.GENERATION_STARTED, {
                     //     message: 'Code generation is already in progress'
@@ -37,7 +37,7 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                 }).finally(() => {
                     // Only clear shouldBeGenerating on successful completion
                     // (errors might want to retry, so this could be handled differently)
-                    if (!agent.isGenerating) {
+                    if (!agent.isCodeGenerating()) {
                         agent.setState({ 
                             ...agent.state, 
                             shouldBeGenerating: false 
@@ -46,7 +46,7 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                 });
                 break;
             case WebSocketMessageRequests.CODE_REVIEW:
-                if (agent.isGenerating) {
+                if (agent.isCodeGenerating()) {
                     sendError(connection, 'Cannot perform code review while generating files');
                     return;
                 }
@@ -122,14 +122,8 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
             case WebSocketMessageRequests.STOP_GENERATION:
                 // Clear shouldBeGenerating flag when user manually stops
                 logger.info('Stopping code generation and clearing shouldBeGenerating flag');
-                agent.setState({ 
-                    ...agent.state, 
-                    shouldBeGenerating: false 
-                });
                 
-                // If there's an active generation, we should signal it to stop
-                // (This depends on how the generation process is implemented)
-                agent.isGenerating = false;
+                // TODO: Implement properly
                 
                 sendToConnection(connection, WebSocketMessageResponses.GENERATION_STOPPED, {
                     message: 'Code generation stopped by user'
@@ -143,7 +137,7 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                     shouldBeGenerating: true 
                 });
                 
-                if (!agent.isGenerating) {
+                if (!agent.isCodeGenerating()) {
                     sendToConnection(connection, WebSocketMessageResponses.GENERATION_RESUMED, {
                         message: 'Code generation resumed'
                     });
