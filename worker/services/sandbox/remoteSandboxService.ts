@@ -241,8 +241,12 @@ export class RemoteSandboxServiceClient extends BaseSandboxService{
     /**
      * Get logs from a runner instance
      */
-    async getLogs(instanceId: string): Promise<GetLogsResponse> {
-        return this.makeRequest(`/instances/${instanceId}/logs`, 'GET');
+    async getLogs(instanceId: string, onlyRecent?: boolean, durationSeconds?: number): Promise<GetLogsResponse> {
+        const params = new URLSearchParams();
+        if (onlyRecent) params.append('reset', 'true');
+        if (durationSeconds) params.append('duration', durationSeconds.toString());
+        const queryString = params.toString() ? `?${params.toString()}` : '';
+        return this.makeRequest(`/instances/${instanceId}/logs${queryString}`, 'GET');
     }
 
     // temp, debug

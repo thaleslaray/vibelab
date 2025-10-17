@@ -167,7 +167,7 @@ import { FileOutputType } from 'worker/agents/schemas';
      */
     abstract getFiles(instanceId: string, filePaths?: string[]): Promise<GetFilesResponse>;
 
-    abstract getLogs(instanceId: string): Promise<GetLogsResponse>;
+    abstract getLogs(instanceId: string, onlyRecent?: boolean, durationSeconds?: number): Promise<GetLogsResponse>;
   
     // ==========================================
     // COMMAND EXECUTION (Required)

@@ -1411,11 +1411,12 @@ export class SandboxSdkClient extends BaseSandboxService {
     // ==========================================
     // LOG RETRIEVAL
     // ==========================================
-    async getLogs(instanceId: string, onlyRecent?: boolean): Promise<GetLogsResponse> {
+    async getLogs(instanceId: string, onlyRecent?: boolean, durationSeconds?: number): Promise<GetLogsResponse> {
         try {
-            this.logger.info('Retrieving instance logs', { instanceId });
+            this.logger.info('Retrieving instance logs', { instanceId, durationSeconds });
             // Use CLI to get all logs and reset the file
-            const cmd = `timeout 10s monitor-cli logs get -i ${instanceId} --format raw ${onlyRecent ? '--reset' : ''}`;
+            const durationArg = durationSeconds ? `--duration ${durationSeconds}` : '';
+            const cmd = `timeout 10s monitor-cli logs get -i ${instanceId} --format raw ${onlyRecent ? '--reset' : ''} ${durationArg}`;
             const result = await this.executeCommand(instanceId, cmd, 15000);
             return {
                 success: true,
