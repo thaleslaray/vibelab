@@ -32,8 +32,10 @@ const COMPACTIFICATION_CONFIG = {
 export interface ToolCallStatusArgs {
     name: string;
     status: 'start' | 'success' | 'error';
-    args?: Record<string, unknown>
+    args?: Record<string, unknown>;
+    result?: string;
 }
+
 export type RenderToolCall = ( args: ToolCallStatusArgs ) => void;
 
 type ConversationResponseCallback = (
@@ -106,6 +108,7 @@ const SYSTEM_PROMPT = `You are Orange, the conversational AI interface for Cloud
   - queue_request: Queue modification requests for implementation in the next phase(s). Use for any feature/bug/change request.
   - get_logs: Fetch unread application logs from the sandbox to diagnose runtime issues.
   - deep_debug: Autonomous debugging assistant that investigates errors, reads files, runs commands, and applies targeted fixes. Use when users report bugs/errors that need immediate investigation and fixing. This transfers control to a specialized debugging agent.
+  - wait_for_generation: Wait for code generation to complete. Use when deep_debug returns GENERATION_IN_PROGRESS error.
   - deploy_preview: Redeploy or restart the preview when the user asks to deploy or the preview is blank/looping.
   - clear_conversation: Clear the current chat history for this session.
   - rename_project: Rename the project (lowercase letters, numbers, hyphens, underscores; 3-50 chars).
@@ -132,6 +135,12 @@ Use the deep_debug tool to investigate and fix bugs immediately. This synchronou
 - Stream progress directly to the user
 
 When you call deep_debug, it runs to completion and returns a transcript. The user will see all the debugging steps in real-time. After it returns, you can acknowledge completion: "The debugging session is complete. The issue should be resolved."
+
+**CRITICAL - If deep_debug returns GENERATION_IN_PROGRESS error:**
+1. Tell user: "Code generation is in progress. Let me wait for it to complete..."
+2. Call wait_for_generation
+3. Retry deep_debug
+4. If it fails again, report the issue
 
 **Option 2 - For feature requests or non-urgent fixes:**
 Queue the request via queue_request - the development agent will address it in the next phase. Then tell the user: "I'll fix this issue in the next phase or two."
@@ -318,7 +327,12 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             ).map(td => ({
                 ...td,
                 onStart: (args: Record<string, unknown>) => toolCallRenderer({ name: td.function.name, status: 'start', args }),
-                onComplete: (args: Record<string, unknown>, _result: unknown) => toolCallRenderer({ name: td.function.name, status: 'success', args })
+                onComplete: (args: Record<string, unknown>, result: unknown) => toolCallRenderer({ 
+                    name: td.function.name, 
+                    status: 'success', 
+                    args,
+                    result: typeof result === 'string' ? result : JSON.stringify(result)
+                })
             }));
 
             const runningHistory = await prepareMessagesForInference(env, conversationState.runningHistory);

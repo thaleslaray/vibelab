@@ -1,6 +1,6 @@
 import { FileOutputType, Blueprint } from "worker/agents/schemas";
 import { BaseSandboxService } from "worker/services/sandbox/BaseSandboxService";
-import { ExecuteCommandsResponse, PreviewType, StaticAnalysisResponse } from "worker/services/sandbox/sandboxTypes";
+import { ExecuteCommandsResponse, PreviewType, StaticAnalysisResponse, RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { ProcessedImageAttachment } from "worker/types/image-attachment";
 import { OperationOptions } from "worker/agents/operations/common";
 
@@ -11,7 +11,7 @@ export abstract class ICodingAgent {
 
     abstract deployToCloudflare(): Promise<{ deploymentUrl?: string; workersUrl?: string } | null>;
 
-    abstract getLogs(reset?: boolean): Promise<string>;
+    abstract getLogs(reset?: boolean, durationSeconds?: number): Promise<string>;
 
     abstract queueUserRequest(request: string, images?: ProcessedImageAttachment[]): void;
 
@@ -29,5 +29,11 @@ export abstract class ICodingAgent {
 
     abstract execCommands(commands: string[], timeout?: number): Promise<ExecuteCommandsResponse>;
     
-    abstract regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; updatedPreview: string }>;
+    abstract regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }>;
+
+    abstract fetchRuntimeErrors(clear?: boolean): Promise<RuntimeError[]>;
+
+    abstract isCodeGenerating(): boolean;
+
+    abstract waitForGeneration(): Promise<void>;
 }

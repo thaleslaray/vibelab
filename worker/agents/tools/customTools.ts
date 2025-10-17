@@ -8,7 +8,6 @@ import { createGetLogsTool } from './toolkit/get-logs';
 import { createDeployPreviewTool } from './toolkit/deploy-preview';
 import { CodingAgentInterface } from 'worker/agents/services/implementations/CodingAgent';
 import { createDeepDebuggerTool } from "./toolkit/deep-debugger";
-import { createClearConversationTool } from './toolkit/clear-conversation';
 import { createRenameProjectTool } from './toolkit/rename-project';
 import { createAlterBlueprintTool } from './toolkit/alter-blueprint';
 import { DebugSession } from '../assistants/codeDebugger';
@@ -16,6 +15,10 @@ import { createReadFilesTool } from './toolkit/read-files';
 import { createExecCommandsTool } from './toolkit/exec-commands';
 import { createRunAnalysisTool } from './toolkit/run-analysis';
 import { createRegenerateFileTool } from './toolkit/regenerate-file';
+import { createWaitTool } from './toolkit/wait';
+import { createGetRuntimeErrorsTool } from './toolkit/get-runtime-errors';
+import { createWaitForGenerationTool } from './toolkit/wait-for-generation';
+import { RuntimeError } from 'worker/services/sandbox/sandboxTypes';
 
 export async function executeToolWithDefinition<TArgs, TResult>(
     toolDef: ToolDefinition<TArgs, TResult>,
@@ -43,7 +46,7 @@ export function buildTools(
         createQueueRequestTool(agent, logger),
         createGetLogsTool(agent, logger),
         createDeployPreviewTool(agent, logger),
-        createClearConversationTool(agent, logger),
+        createWaitForGenerationTool(agent, logger),
         createRenameProjectTool(agent, logger),
         createAlterBlueprintTool(agent, logger),
         // Deep autonomous debugging assistant tool
@@ -54,11 +57,13 @@ export function buildTools(
 export function buildDebugTools(session: DebugSession, logger: StructuredLogger, toolRenderer?: RenderToolCall): ToolDefinition<any, any>[] {
   const tools = [
     createGetLogsTool(session.agent, logger),
+    createGetRuntimeErrorsTool(session.agent, logger),
     createReadFilesTool(session.agent, logger),
     createRunAnalysisTool(session.agent, logger),
     createExecCommandsTool(session.agent, logger),
     createRegenerateFileTool(session.agent, logger),
     createDeployPreviewTool(session.agent, logger),
+    createWaitTool(logger),
   ];
 
   // Attach tool renderer for UI visualization if provided
@@ -66,7 +71,12 @@ export function buildDebugTools(session: DebugSession, logger: StructuredLogger,
     return tools.map(td => ({
       ...td,
       onStart: (args: Record<string, unknown>) => toolRenderer({ name: td.function.name, status: 'start', args }),
-      onComplete: (args: Record<string, unknown>, _result: unknown) => toolRenderer({ name: td.function.name, status: 'success', args })
+      onComplete: (args: Record<string, unknown>, result: unknown) => toolRenderer({ 
+        name: td.function.name, 
+        status: 'success', 
+        args,
+        result: typeof result === 'string' ? result : JSON.stringify(result)
+      })
     }));
   }
 
