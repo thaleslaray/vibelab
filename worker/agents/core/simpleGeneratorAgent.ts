@@ -14,7 +14,7 @@ import { MAX_DEPLOYMENT_RETRIES, PREVIEW_EXPIRED_ERROR, WebSocketMessageResponse
 import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage } from './websocket';
 import { createObjectLogger, StructuredLogger } from '../../logger';
 import { ProjectSetupAssistant } from '../assistants/projectsetup';
-import { UserConversationProcessor, RenderToolCall } from '../operations/UserConversationProcessor';
+import { UserConversationProcessor, buildToolCallRenderer } from '../operations/UserConversationProcessor';
 import { FileManager } from '../services/implementations/FileManager';
 import { StateManager } from '../services/implementations/StateManager';
 // import { WebSocketBroadcaster } from '../services/implementations/WebSocketBroadcaster';
@@ -48,7 +48,6 @@ import { generateAppProxyToken, generateAppProxyUrl } from 'worker/services/aiga
 import { ImageType, uploadImage } from 'worker/utils/images';
 import { ConversationMessage, ConversationState } from '../inferutils/common';
 import { DeepCodeDebugger } from '../assistants/codeDebugger';
-import { IdGenerator } from '../utils/idGenerator';
 import { DeepDebugResult } from './types';
 
 interface WebhookPayload {
@@ -852,7 +851,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     async executeDeepDebug(
         issue: string,
         focusPaths?: string[],
-        toolRenderer?: RenderToolCall
     ): Promise<DeepDebugResult> {
         
         const debugPromise = (async () => {
@@ -875,16 +873,16 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 const streamCallback = (chunk: string) => {
                     this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
                         message: chunk,
-                        conversationId: `deep-debug-${IdGenerator.generateConversationId()}`,
+                        conversationId: dbg.getConversationId(),
                         isStreaming: true,
                     });
                 };
-
+                const toolCallRenderer = buildToolCallRenderer(streamCallback, dbg.getConversationId());
                 const out = await dbg.run(
                     { issue, previousTranscript },
                     { filesIndex, agent: this.codingAgent, runtimeErrors },
                     streamCallback,
-                    toolRenderer,
+                    toolCallRenderer,
                 );
 
                 // Save transcript for next session

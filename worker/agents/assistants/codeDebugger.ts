@@ -251,6 +251,7 @@ The goal is working code, verified through evidence. Think internally, act decis
 
 <appendix>
 The most important class of errors is the "Maximum update depth exceeded" error which you definitely need to identify and fix. 
+Here are some important guidelines for identifying such issues and preventing them:
 ${PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION}
 
 ${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
@@ -350,10 +351,13 @@ function summarizeFiles(files: FileState[], max = 120): string {
 export class DeepCodeDebugger extends Assistant<Env> {
     logger = createObjectLogger(this, 'DeepCodeDebugger');
     modelConfigOverride?: ModelConfig;
+
     private loopDetection: LoopDetectionState = {
         recentCalls: [],
         repetitionWarnings: 0,
     };
+
+    private conversationId: string;
 
     constructor(
         env: Env,
@@ -362,6 +366,11 @@ export class DeepCodeDebugger extends Assistant<Env> {
     ) {
         super(env, inferenceContext);
         this.modelConfigOverride = modelConfigOverride;
+        this.conversationId = `deep-debug-${IdGenerator.generateConversationId()}`;
+    }
+
+    getConversationId(): string {
+        return this.conversationId;
     }
 
     private detectRepetition(toolName: string, args: Record<string, unknown>): boolean {
@@ -389,13 +398,11 @@ export class DeepCodeDebugger extends Assistant<Env> {
         this.loopDetection.repetitionWarnings++;
 
         const warningMessage = `
-⚠️ CRITICAL: REPETITION DETECTED - TOOL CALL BLOCKED
+⚠️ CRITICAL: REPETITION DETECTED
 
 You just attempted to execute "${toolName}" with identical arguments for the ${this.loopDetection.repetitionWarnings}th time.
 
-This tool call was BLOCKED to prevent an infinite loop.
-
-REQUIRED ACTIONS:
+RECOMMENDED ACTIONS:
 1. If your task is complete, state "TASK_COMPLETE: [summary]" and STOP
 2. If not complete, try a DIFFERENT approach:
    - Use different tools
@@ -448,10 +455,10 @@ If you're genuinely stuck after trying 3 different approaches, honestly report: 
                     this.logger.warn(`Loop detected for tool: ${tool.function.name}`);
                     this.injectLoopWarning(tool.function.name);
                     
-                    // CRITICAL: Block execution to prevent infinite loops
-                    return {
-                        error: `Loop detected: You've called ${tool.function.name} with the same arguments multiple times. Try a different approach or stop if the task is complete.`
-                    };
+                    // // CRITICAL: Block execution to prevent infinite loops
+                    // return {
+                    //     error: `Loop detected: You've called ${tool.function.name} with the same arguments multiple times. Try a different approach or stop if the task is complete.`
+                    // };
                 }
 
                 // Only execute if no loop detected

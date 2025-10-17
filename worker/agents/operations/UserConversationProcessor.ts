@@ -45,7 +45,7 @@ type ConversationResponseCallback = (
     tool?: ToolCallStatusArgs
 ) => void;
 
-function buildToolCallRenderer(callback: ConversationResponseCallback, conversationId: string): RenderToolCall {
+export function buildToolCallRenderer(callback: ConversationResponseCallback, conversationId: string): RenderToolCall {
     return (args: ToolCallStatusArgs) => {
         callback('', conversationId, false, args);
     }
@@ -349,7 +349,6 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             const tools = buildTools(
                 agent,
                 logger,
-                toolCallRenderer,
             ).map(td => ({
                 ...td,
                 onStart: (args: Record<string, unknown>) => toolCallRenderer({ name: td.function.name, status: 'start', args }),
