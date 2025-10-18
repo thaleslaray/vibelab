@@ -1,5 +1,5 @@
 import { ProcessedImageAttachment } from "worker/types/image-attachment";
-import { Blueprint } from "worker/agents/schemas";
+import { Blueprint, FileConceptType } from "worker/agents/schemas";
 import { ExecuteCommandsResponse, StaticAnalysisResponse, RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { ICodingAgent } from "../interfaces/ICodingAgent";
 import { OperationOptions } from "worker/agents/operations/common";
@@ -80,6 +80,16 @@ export class CodingAgentInterface {
     // Exposes a simplified regenerate API for tools
     regenerateFile(path: string, issues: string[]): Promise<{ path: string; diff: string }> {
         return this.agentStub.regenerateFileByPath(path, issues);
+    }
+
+    // Exposes file generation via phase implementation
+    generateFiles(
+        phaseName: string,
+        phaseDescription: string,
+        requirements: string[],
+        files: FileConceptType[]
+    ): Promise<{ files: Array<{ path: string; purpose: string; diff: string }> }> {
+        return this.agentStub.generateFiles(phaseName, phaseDescription, requirements, files);
     }
 
     isCodeGenerating(): boolean {

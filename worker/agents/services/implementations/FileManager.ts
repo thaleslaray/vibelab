@@ -42,17 +42,23 @@ export class FileManager implements IFileManager {
         for (const file of files) {
             let lastDiff = '';
             const oldFile = filesMap[file.filePath];
-            if (oldFile) {
+            
+            // Get comparison base: from generatedFilesMap, template/filesystem, or empty string for new files
+            const oldFileContents = oldFile?.fileContents ?? (this.getFileContents(file.filePath) || '');
+            
+            // Generate diff if contents changed
+            if (oldFileContents !== file.fileContents) {
                 try {
-                    // Generate diff of old file and new file
-                    lastDiff = Diff.createPatch(file.filePath, oldFile.fileContents, file.fileContents);
+                    lastDiff = Diff.createPatch(file.filePath, oldFileContents, file.fileContents);
                     if (lastDiff) {
-                        console.log(`Generated diff for file ${file.filePath}:`, lastDiff);
+                        const isNewFile = oldFileContents === '';
+                        console.log(`Generated diff for ${isNewFile ? 'new' : ''} file ${file.filePath}:`, lastDiff);
                     }
                 } catch (error) {
                     console.error(`Failed to generate diff for file ${file.filePath}:`, error);
                 }
             }
+            
             const fileState = {
                 ...file,
                 lasthash: '',

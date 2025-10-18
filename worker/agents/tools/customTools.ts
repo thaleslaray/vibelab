@@ -15,6 +15,7 @@ import { createReadFilesTool } from './toolkit/read-files';
 import { createExecCommandsTool } from './toolkit/exec-commands';
 import { createRunAnalysisTool } from './toolkit/run-analysis';
 import { createRegenerateFileTool } from './toolkit/regenerate-file';
+import { createGenerateFilesTool } from './toolkit/generate-files';
 import { createWaitTool } from './toolkit/wait';
 import { createGetRuntimeErrorsTool } from './toolkit/get-runtime-errors';
 import { createWaitForGenerationTool } from './toolkit/wait-for-generation';
@@ -63,6 +64,7 @@ export function buildDebugTools(session: DebugSession, logger: StructuredLogger,
     createRunAnalysisTool(session.agent, logger),
     createExecCommandsTool(session.agent, logger),
     createRegenerateFileTool(session.agent, logger),
+    createGenerateFilesTool(session.agent, logger),
     createDeployPreviewTool(session.agent, logger),
     createWaitTool(logger),
   ];

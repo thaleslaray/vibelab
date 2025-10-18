@@ -1,4 +1,4 @@
-import { FileOutputType, Blueprint } from "worker/agents/schemas";
+import { FileOutputType, Blueprint, FileConceptType } from "worker/agents/schemas";
 import { BaseSandboxService } from "worker/services/sandbox/BaseSandboxService";
 import { ExecuteCommandsResponse, PreviewType, StaticAnalysisResponse, RuntimeError } from "worker/services/sandbox/sandboxTypes";
 import { ProcessedImageAttachment } from "worker/types/image-attachment";
@@ -33,6 +33,13 @@ export abstract class ICodingAgent {
     abstract execCommands(commands: string[], timeout?: number): Promise<ExecuteCommandsResponse>;
     
     abstract regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }>;
+
+    abstract generateFiles(
+        phaseName: string,
+        phaseDescription: string,
+        requirements: string[],
+        files: FileConceptType[]
+    ): Promise<{ files: Array<{ path: string; purpose: string; diff: string }> }>;
 
     abstract fetchRuntimeErrors(clear?: boolean): Promise<RuntimeError[]>;
 
