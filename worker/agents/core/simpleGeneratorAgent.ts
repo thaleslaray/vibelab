@@ -3,6 +3,7 @@ import {
     Blueprint, 
     PhaseConceptGenerationSchemaType, 
     PhaseConceptType,
+    FileConceptType,
     FileOutputType,
     PhaseImplementationSchemaType,
 } from '../schemas';
@@ -813,7 +814,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                         
                         const fileToRegenerate = this.fileManager.getGeneratedFile(fileToFix.filePath);
                         if (!fileToRegenerate) {
-                            this.logger().warn(`File to fix not found in generated files: ${fileToFix.filePath}`);
+                            this.logger().warn(`File to fix not found in generated files: ${fileToFix.filePath}, skipping`);
                             continue;
                         }
                         
@@ -1030,7 +1031,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
      * Implement a single phase of code generation
      * Streams file generation with real-time updates and incorporates technical instructions
      */
-    async implementPhase(phase: PhaseConceptType, currentIssues: AllIssues, userContext?: UserContext, streamChunks: boolean = true): Promise<PhaseImplementationSchemaType> {
+    async implementPhase(phase: PhaseConceptType, currentIssues: AllIssues, userContext?: UserContext, streamChunks: boolean = true, postPhaseFixing: boolean = true): Promise<PhaseImplementationSchemaType> {
         const issues = IssueReport.from(currentIssues);
         
         const implementationMsg = userContext?.suggestions && userContext.suggestions.length > 0
@@ -1109,9 +1110,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         // Deploy generated files
         if (finalFiles.length > 0) {
             await this.deployToSandbox(finalFiles, false, phase.name);
-            await this.applyDeterministicCodeFixes();
-            if (this.state.inferenceContext.enableFastSmartCodeFix) {
-                await this.applyFastSmartCodeFixes();
+            if (postPhaseFixing) {
+                await this.applyDeterministicCodeFixes();
+                if (this.state.inferenceContext.enableFastSmartCodeFix) {
+                    await this.applyFastSmartCodeFixes();
+                }
             }
         }
 
@@ -1865,6 +1868,54 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         // Persist to sandbox instance
         await this.getSandboxServiceClient().writeFiles(sandboxInstanceId, [{ filePath: regenerated.filePath, fileContents: regenerated.fileContents }], `Deep debugger fix: ${path}`);
         return { path, diff: regenerated.lastDiff };
+    }
+
+    async generateFiles(
+        phaseName: string,
+        phaseDescription: string,
+        requirements: string[],
+        files: FileConceptType[]
+    ): Promise<{ files: Array<{ path: string; purpose: string; diff: string }> }> {
+        this.logger().info('Generating files for deep debugger', {
+            phaseName,
+            requirementsCount: requirements.length,
+            filesCount: files.length
+        });
+
+        // Create phase structure with explicit files
+        const phase: PhaseConceptType = {
+            name: phaseName,
+            description: phaseDescription,
+            files: files,
+            lastPhase: true
+        };
+
+        // Call existing implementPhase with postPhaseFixing=false
+        // This skips deterministic fixes and fast smart fixes
+        const result = await this.implementPhase(
+            phase,
+            {
+                runtimeErrors: [],
+                staticAnalysis: { 
+                    success: true, 
+                    lint: { issues: [] }, 
+                    typecheck: { issues: [] } 
+                },
+                clientErrors: []
+            },
+            { suggestions: requirements },
+            true, // streamChunks
+            false // postPhaseFixing = false (skip auto-fixes)
+        );
+
+        // Return files with diffs from FileState
+        return {
+            files: result.files.map(f => ({
+                path: f.filePath,
+                purpose: f.filePurpose || '',
+                diff: (f as any).lastDiff || '' // FileState has lastDiff
+            }))
+        };
     }
 
     async waitForPreview(): Promise<void> {
