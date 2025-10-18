@@ -120,13 +120,21 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                 });
                 break;
             case WebSocketMessageRequests.STOP_GENERATION:
-                // Clear shouldBeGenerating flag when user manually stops
-                logger.info('Stopping code generation and clearing shouldBeGenerating flag');
+                logger.info('User requested to stop generation');
                 
-                // TODO: Implement properly
+                // Cancel current inference operation
+                const wasCancelled = agent.cancelCurrentInference();
+                
+                // Clear shouldBeGenerating flag
+                agent.setState({ 
+                    ...agent.state, 
+                    shouldBeGenerating: false 
+                });
                 
                 sendToConnection(connection, WebSocketMessageResponses.GENERATION_STOPPED, {
-                    message: 'Code generation stopped by user'
+                    message: wasCancelled 
+                        ? 'Inference operation cancelled successfully'
+                        : 'No active inference to cancel'
                 });
                 break;
             case WebSocketMessageRequests.RESUME_GENERATION:

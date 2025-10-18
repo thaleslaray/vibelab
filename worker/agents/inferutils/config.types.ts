@@ -85,4 +85,5 @@ export interface InferenceContext extends InferenceMetadata {
     userModelConfigs?: Record<AgentActionKey, ModelConfig>;
     enableRealtimeCodeFix: boolean;
     enableFastSmartCodeFix: boolean;
+    abortSignal?: AbortSignal;
 }

@@ -10,7 +10,7 @@ import { ArrowRight, Image as ImageIcon } from 'react-feather';
 import { useParams, useSearchParams, useNavigate } from 'react-router';
 import { MonacoEditor } from '../../components/monaco-editor/monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Expand, Github, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw } from 'lucide-react';
+import { Expand, Github, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw, X } from 'lucide-react';
 import { Blueprint } from './components/blueprint';
 import { FileExplorer } from './components/file-explorer';
 import { UserMessage, AIMessage } from './components/messages';
@@ -755,6 +755,24 @@ export default function Chat() {
 								}}
 							/>
 							<div className="absolute right-1.5 bottom-2.5 flex items-center gap-1">
+								{(isGenerating || isGeneratingBlueprint) && (
+									<button
+										type="button"
+										onClick={() => {
+											if (websocket) {
+												sendWebSocketMessage(websocket, 'stop_generation');
+											}
+										}}
+										className="p-1.5 rounded-md hover:bg-red-500/10 text-text-tertiary hover:text-red-500 transition-all duration-200 group relative"
+										aria-label="Stop generation"
+										title="Stop generation"
+									>
+										<X className="size-4" strokeWidth={2} />
+										<span className="absolute -top-8 right-0 px-2 py-1 bg-bg-1 border border-border-primary rounded text-xs text-text-secondary whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+											Stop
+										</span>
+									</button>
+								)}
 								<button
 									type="button"
 									onClick={() => imageInputRef.current?.click()}

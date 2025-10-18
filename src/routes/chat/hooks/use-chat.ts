@@ -41,10 +41,10 @@ export interface PhaseTimelineItem {
 	files: {
 		path: string;
 		purpose: string;
-		status: 'generating' | 'completed' | 'error' | 'validating';
+		status: 'generating' | 'completed' | 'error' | 'validating' | 'cancelled';
 		contents?: string;
 	}[];
-	status: 'generating' | 'completed' | 'error' | 'validating';
+	status: 'generating' | 'completed' | 'error' | 'validating' | 'cancelled';
 	timestamp: number;
 }
 
