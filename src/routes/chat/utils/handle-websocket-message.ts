@@ -592,6 +592,10 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         }
                         return updated;
                     });
+
+                    if (message.phase.name === 'Finalization and Review') {
+                        sendMessage(createAIMessage('core_app_complete', 'Main app generation completed. Doing code cleanups and resolving any lingering issues. Meanwhile, feel free to ask me anything!'));
+                    }
                 }
 
                 logger.debug('🔄 Scheduling preview refresh in 1 second after deployment completion');

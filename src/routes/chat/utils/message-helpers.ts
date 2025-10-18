@@ -32,6 +32,8 @@ export function isConversationalMessage(messageId: string): boolean {
         'chat-welcome',
         'deployment-status',
         'code_reviewed',
+        'generation-complete',
+        'core_app_complete',
     ];
     
     return conversationalIds.includes(messageId) || messageId.startsWith('conv-');
