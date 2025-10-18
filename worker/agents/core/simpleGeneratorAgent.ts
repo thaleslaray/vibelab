@@ -437,17 +437,16 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     /**
-     * Creates a new abort controller for the current operation
-     * Aborts any previous operation in progress
+     * Gets or creates an abort controller for the current operation
+     * Reuses existing controller for nested operations (e.g., tool calling)
      */
-    protected createNewAbortController(): AbortController {
-        // Cancel any existing operation
+    protected getOrCreateAbortController(): AbortController {
+        // Reuse existing controller if present (for nested operations)
         if (this.currentAbortController) {
-            this.logger().info('Aborting previous inference operation');
-            this.currentAbortController.abort();
+            return this.currentAbortController;
         }
         
-        // Create new controller in memory
+        // Create new controller in memory for new operation
         this.currentAbortController = new AbortController();
         
         return this.currentAbortController;
@@ -475,9 +474,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     
     /**
      * Gets inference context with abort signal
+     * Reuses existing abort controller for nested operations
      */
     protected getInferenceContext(): InferenceContext {
-        const controller = this.createNewAbortController();
+        const controller = this.getOrCreateAbortController();
         
         return {
             ...this.state.inferenceContext,
@@ -624,6 +624,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 error: `Error during generation: ${errorMessage}`
             });
         } finally {
+            // Clear abort controller after generation completes
+            this.clearAbortController();
+            
             const appService = new AppService(this.env);
             await appService.updateApp(
                 this.getAgentId(),

@@ -187,22 +187,46 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
                     if (state.generatedPhases && state.generatedPhases.length > 0 && phaseTimeline.length === 0) {
                         logger.debug('📋 Restoring phase timeline:', state.generatedPhases);
-                        const timeline = state.generatedPhases.map((phase: any, index: number) => ({
-                            id: `phase-${index}`,
-                            name: phase.name,
-                            description: phase.description,
-                            status: phase.completed ? 'completed' as const : 'generating' as const,
-                            files: phase.files.map((filesConcept: any) => {
-                                const file = state.generatedFilesMap?.[filesConcept.path];
-                                return {
-                                    path: filesConcept.path,
-                                    purpose: filesConcept.purpose,
-                                    status: (file ? 'completed' as const : 'generating' as const),
-                                    contents: file?.fileContents
-                                };
-                            }),
-                            timestamp: Date.now(),
-                        }));
+                        // If not actively generating, mark incomplete phases as cancelled (they were interrupted)
+                        const isActivelyGenerating = state.shouldBeGenerating === true;
+                        
+                        const timeline = state.generatedPhases.map((phase: any, index: number) => {
+                            // Determine phase status:
+                            // - completed if explicitly marked complete
+                            // - cancelled if incomplete and not actively generating (interrupted)
+                            // - generating if incomplete and actively generating
+                            const phaseStatus = phase.completed 
+                                ? 'completed' as const 
+                                : !isActivelyGenerating 
+                                    ? 'cancelled' as const 
+                                    : 'generating' as const;
+                            
+                            return {
+                                id: `phase-${index}`,
+                                name: phase.name,
+                                description: phase.description,
+                                status: phaseStatus,
+                                files: phase.files.map((filesConcept: any) => {
+                                    const file = state.generatedFilesMap?.[filesConcept.path];
+                                    // File status:
+                                    // - completed if it exists in generated files
+                                    // - cancelled if missing and not actively generating (interrupted)
+                                    // - generating if missing and actively generating
+                                    const fileStatus = file 
+                                        ? 'completed' as const 
+                                        : !isActivelyGenerating 
+                                            ? 'cancelled' as const 
+                                            : 'generating' as const;
+                                    return {
+                                        path: filesConcept.path,
+                                        purpose: filesConcept.purpose,
+                                        status: fileStatus,
+                                        contents: file?.fileContents
+                                    };
+                                }),
+                                timestamp: Date.now(),
+                            };
+                        });
                         setPhaseTimeline(timeline);
                     }
                     
@@ -371,6 +395,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'generation_started': {
                 updateStage('code', { status: 'active' });
                 setTotalFiles(message.totalFiles);
+                setIsGenerating(true);
                 // Reset review tracking for a new generation run
                 lastReviewIssueCount = 0;
                 reviewStartAnnounced = false;
@@ -385,7 +410,11 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 updateStage('fix', { status: 'completed', metadata: undefined });
 
                 sendMessage(createAIMessage('generation-complete', 'Code generation has been completed.'));
+                
+                // Reset all phase indicators
                 setIsPhaseProgressActive(false);
+                setIsThinking(false);
+                setIsGenerating(false);
                 break;
             }
 
@@ -594,6 +623,16 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'generation_stopped': {
                 setIsGenerating(false);
                 setIsGenerationPaused(true);
+                
+                // Reset phase indicators
+                setIsPhaseProgressActive(false);
+                setIsThinking(false);
+                
+                // Show toast notification for user-initiated stop
+                toast.info('Generation stopped', {
+                    description: message.message || 'Code generation has been stopped'
+                });
+                
                 sendMessage(createAIMessage('generation_stopped', message.message));
                 break;
             }
