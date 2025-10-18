@@ -739,17 +739,24 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             });
     
             let currentIssues : AllIssues;
-            if (staticAnalysis) {
-                // If have cached static analysis, fetch everything else fresh
-                currentIssues = {
-                    runtimeErrors: await this.fetchRuntimeErrors(true),
-                    staticAnalysis: staticAnalysis,
-                    clientErrors: this.state.clientReportedErrors
-                };
+            if (this.state.sandboxInstanceId) {
+                if (staticAnalysis) {
+                    // If have cached static analysis, fetch everything else fresh
+                    currentIssues = {
+                        runtimeErrors: await this.fetchRuntimeErrors(true),
+                        staticAnalysis: staticAnalysis,
+                        clientErrors: this.state.clientReportedErrors
+                    };
+                } else {
+                    currentIssues = await this.fetchAllIssues(true)
+                }
             } else {
-                currentIssues = await this.fetchAllIssues(true)
+                currentIssues = {
+                    runtimeErrors: [],
+                    staticAnalysis: { success: true, lint: { issues: [] }, typecheck: { issues: [] } },
+                    clientErrors: []
+                }
             }
-            
             // Implement the phase with user context (suggestions and images)
             await this.implementPhase(phaseConcept, currentIssues, userContext);
     
