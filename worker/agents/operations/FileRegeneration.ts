@@ -112,7 +112,7 @@ export class FileRegenerationOperation extends AgentOperation<FileRegenerationIn
     ): Promise<FileGenerationOutputType> {
         try {
             // Use realtime code fixer to fix the file with enhanced surgical fix prompts
-            const realtimeCodeFixer = new RealtimeCodeFixer(options.env, options.inferenceContext, false, undefined, undefined, SYSTEM_PROMPT, USER_PROMPT);
+            const realtimeCodeFixer = new RealtimeCodeFixer(options.env, options.inferenceContext, false, undefined, "fileRegeneration", SYSTEM_PROMPT, USER_PROMPT);
             const fixedFile = await realtimeCodeFixer.run(
                 inputs.file, {
                     previousFiles: options.context.allFiles,
