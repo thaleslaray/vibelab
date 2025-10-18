@@ -329,7 +329,7 @@ export function PhaseTimeline({
 		if (validatingPhase) {
 			return {
 				text: `Reviewing: ${truncatePhaseName(validatingPhase.name)}`,
-				subtitle: 'Running tests and fixing issues...',
+				subtitle: 'Identifying issues...',
 				icon: <StatusLoader color="blue" />,
 				badge: phaseBadge
 			};
@@ -818,7 +818,7 @@ export function PhaseTimeline({
 														<StatusLoader size="sm" color="blue" />
 														<span className="text-sm font-medium text-blue-400">Reviewing phase...</span>
 													</div>
-													<span className="text-xs text-blue-300/80 ml-5">Running tests and fixing any issues</span>
+													<span className="text-xs text-blue-300/80 ml-5">Identifying issues...</span>
 												</div>
 											);
 										} else if (isPreviewDeploying) {
