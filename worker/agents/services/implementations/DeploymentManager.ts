@@ -159,8 +159,16 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 const status = await client.getInstanceStatus(instanceId);
                 
                 if (!status.success || !status.isHealthy) {
-                    logger.warn(`Instance ${instanceId} unhealthy, clearing interval`);
+                    logger.warn(`Instance ${instanceId} unhealthy, triggering redeploy`);
                     this.clearHealthCheckInterval();
+                    
+                    // Trigger redeploy to recover from unhealthy state
+                    try {
+                        await this.deployToSandbox();
+                        logger.info('Instance redeployed successfully after health check failure');
+                    } catch (redeployError) {
+                        logger.error('Failed to redeploy after health check failure:', redeployError);
+                    }
                 }
             } catch (error) {
                 logger.error('Health check failed:', error);
@@ -274,7 +282,6 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
             } catch (error) {
                 logger.warn('Previous deployment failed, proceeding with new deployment:', error);
             }
-            return null;
         }
 
         logger.info("Deploying to sandbox", { files: files.length, redeploy, commitMessage, sessionId: this.getSessionId() });
@@ -338,7 +345,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
             });
 
             // Start health check after successful deployment
-            if (result.redeployed) {
+            if (result.redeployed || this.healthCheckInterval === null) {
                 this.startHealthCheckInterval(result.sandboxInstanceId);
             }
 
@@ -385,9 +392,9 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 logger.info(`Retrying deployment, ${retries} attempts remaining`);
                 
                 // Exponential backoff
-                await new Promise(resolve => 
-                    setTimeout(resolve, Math.pow(2, MAX_DEPLOYMENT_RETRIES - retries) * 1000)
-                );
+                const attempt = MAX_DEPLOYMENT_RETRIES - retries + 1;
+                const delayMs = Math.pow(2, attempt - 1) * 1000;
+                await new Promise(resolve => setTimeout(resolve, delayMs));
 
                 return this.executeDeploymentWithRetry(
                     files,

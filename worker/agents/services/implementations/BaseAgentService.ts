@@ -54,14 +54,19 @@ export abstract class BaseAgentService {
         errorMsg: string,
         onTimeout?: () => void
     ): Promise<T> {
-        return Promise.race([
-            operation,
-            new Promise<never>((_, reject) =>
-                setTimeout(() => {
-                    onTimeout?.();
-                    reject(new Error(errorMsg));
-                }, timeoutMs)
-            )
-        ]);
+        let timeoutId: ReturnType<typeof setTimeout>;
+        
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+                onTimeout?.();
+                reject(new Error(errorMsg));
+            }, timeoutMs);
+        });
+        
+        try {
+            return await Promise.race([operation, timeoutPromise]);
+        } finally {
+            clearTimeout(timeoutId!);
+        }
     }
 }

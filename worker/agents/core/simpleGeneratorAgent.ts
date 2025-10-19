@@ -416,8 +416,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
      * Reuses existing controller for nested operations (e.g., tool calling)
      */
     protected getOrCreateAbortController(): AbortController {
-        // Reuse existing controller if present (for nested operations)
-        if (this.currentAbortController) {
+        // Don't reuse aborted controllers
+        if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
             return this.currentAbortController;
         }
         
@@ -542,10 +542,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
         let currentDevState = CurrentDevState.PHASE_IMPLEMENTING;
         const generatedPhases = this.state.generatedPhases;
-        const completedPhases = generatedPhases.filter(phase => !phase.completed);
+        const incompletedPhases = generatedPhases.filter(phase => !phase.completed);
         let phaseConcept : PhaseConceptType | undefined;
-        if (completedPhases.length > 0) {
-            phaseConcept = completedPhases[completedPhases.length - 1];
+        if (incompletedPhases.length > 0) {
+            phaseConcept = incompletedPhases[incompletedPhases.length - 1];
         } else if (generatedPhases.length > 0) {
             currentDevState = CurrentDevState.PHASE_GENERATING;
         } else {
@@ -1940,7 +1940,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     async getLogs(_reset?: boolean, durationSeconds?: number): Promise<string> {
-        const response = await this.getSandboxServiceClient().getLogs(this.state.sandboxInstanceId!, _reset, durationSeconds);
+        if (!this.state.sandboxInstanceId) {
+            throw new Error('Cannot get logs: No sandbox instance available');
+        }
+        
+        const response = await this.getSandboxServiceClient().getLogs(this.state.sandboxInstanceId, _reset, durationSeconds);
         if (response.success) {
             return `STDOUT: ${response.logs.stdout}\nSTDERR: ${response.logs.stderr}`;
         } else {
