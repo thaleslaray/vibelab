@@ -104,10 +104,6 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                     logger.error('Error during preview deployment:', error);
                 });
                 break;
-            case WebSocketMessageRequests.RUNTIME_ERROR_FOUND:
-                logger.info(`Client reported errors: ${parsedMessage.data}`);
-                agent.setState({ ...agent.state, clientReportedErrors: parsedMessage.data });
-                break;
             case WebSocketMessageRequests.CAPTURE_SCREENSHOT:
                 agent.captureScreenshot(parsedMessage.data.url, parsedMessage.data.viewport).then((screenshotResult) => {
                     if (!screenshotResult) {

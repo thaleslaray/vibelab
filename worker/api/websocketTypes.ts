@@ -1,4 +1,4 @@
-import type { ClientReportedErrorType, CodeReviewOutputType, FileConceptType, FileOutputType } from "../agents/schemas";
+import type { CodeReviewOutputType, FileConceptType, FileOutputType } from "../agents/schemas";
 import type { CodeGenState } from "../agents/core/state";
 import type { ConversationState } from "../agents/inferutils/common";
 import type { CodeIssue, RuntimeError, StaticAnalysisResponse } from "../services/sandbox/sandboxTypes";
@@ -67,18 +67,18 @@ type GenerationCompleteMessage = {
 	previewURL?: string;
 };
 
-type DeploymentStartedMessage = {
+export type DeploymentStartedMessage = {
 	type: 'deployment_started';
 	message: string;
 	files: { filePath: string }[];
 };
 
-type DeploymentFailedMessage = {
+export type DeploymentFailedMessage = {
 	type: 'deployment_failed';
 	error: string;
 };
 
-type DeploymentCompletedMessage = {
+export type DeploymentCompletedMessage = {
 	type: 'deployment_completed';
 	previewURL: string;
 	tunnelURL: string;
@@ -114,7 +114,6 @@ type CodeReviewingMessage = {
 	type: 'code_reviewing';
 	message: string;
 	staticAnalysis?: StaticAnalysisResponse;
-	clientErrors: ClientReportedErrorType[];
 	runtimeErrors: RuntimeError[];
 };
 
@@ -217,13 +216,13 @@ type GenerationResumedMessage = {
 	instanceId: string;
 };
 
-type CloudflareDeploymentStartedMessage = {
+export type CloudflareDeploymentStartedMessage = {
 	type: 'cloudflare_deployment_started';
 	message: string;
 	instanceId: string;
 };
 
-type CloudflareDeploymentCompletedMessage = {
+export type CloudflareDeploymentCompletedMessage = {
 	type: 'cloudflare_deployment_completed';
 	message: string;
 	instanceId: string;
@@ -231,7 +230,7 @@ type CloudflareDeploymentCompletedMessage = {
 	workersUrl?: string;
 };
 
-type CloudflareDeploymentErrorMessage = {
+export type CloudflareDeploymentErrorMessage = {
 	type: 'cloudflare_deployment_error';
 	message: string;
 	instanceId: string;
