@@ -1,6 +1,5 @@
 import { IStateManager } from '../interfaces/IStateManager';
 import { IFileManager } from '../interfaces/IFileManager';
-import { BaseSandboxService } from '../../../services/sandbox/BaseSandboxService';
 import { StructuredLogger } from '../../../logger';
 import { ServiceOptions } from '../interfaces/IServiceOptions';
 
@@ -11,14 +10,14 @@ import { ServiceOptions } from '../interfaces/IServiceOptions';
 export abstract class BaseAgentService {
     protected readonly stateManager: IStateManager;
     protected readonly fileManager: IFileManager;
-    protected readonly getSandboxClient: () => BaseSandboxService;
     protected readonly getLogger: () => StructuredLogger;
+    protected readonly env: Env;
 
     constructor(options: ServiceOptions) {
         this.stateManager = options.stateManager;
         this.fileManager = options.fileManager;
-        this.getSandboxClient = options.getSandboxClient;
         this.getLogger = options.getLogger;
+        this.env = options.env;
     }
 
     /**
@@ -35,13 +34,10 @@ export abstract class BaseAgentService {
         this.stateManager.setState(newState);
     }
 
-    /**
-     * Get fresh sandbox client instance (DO-compatible)
-     */
-    protected getClient(): BaseSandboxService {
-        return this.getSandboxClient();
+    getAgentId() {
+        return this.getState().inferenceContext.agentId
     }
-
+    
     /**
      * Get fresh logger instance (DO-compatible)
      */

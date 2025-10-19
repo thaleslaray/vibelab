@@ -12,6 +12,8 @@ import { generateId } from '../../../utils/idGenerator';
 import { generateAppProxyToken, generateAppProxyUrl } from '../../../services/aigateway-proxy/controller';
 import { BaseAgentService } from './BaseAgentService';
 import { ServiceOptions } from '../interfaces/IServiceOptions';
+import { BaseSandboxService } from '../../../services/sandbox/BaseSandboxService';
+import { getSandboxService } from '../../../services/sandbox/factory';
 
 const MAX_DEPLOYMENT_RETRIES = 3;
 const DEPLOYMENT_TIMEOUT_MS = 60000;
@@ -25,11 +27,12 @@ const HEALTH_CHECK_INTERVAL_MS = 30000;
 export class DeploymentManager extends BaseAgentService implements IDeploymentManager {
     private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
     private currentDeploymentPromise: Promise<PreviewType | null> | null = null;
+    private cachedSandboxClient: BaseSandboxService | null = null;
 
     constructor(
         options: ServiceOptions,
-        private env: Env,
-        private projectNamePrefixMaxLength: number
+        private projectNamePrefixMaxLength: number,
+        private maxCommandsHistory: number
     ) {
         super(options);
         
@@ -51,6 +54,24 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
     }
 
     /**
+     * Cache is tied to current sessionId and invalidated on reset
+     */
+    public getClient(): BaseSandboxService {
+        if (!this.cachedSandboxClient) {
+            const logger = this.getLog();
+            logger.info('Creating sandbox service client', { 
+                sessionId: this.getSessionId(), 
+                agentId: this.getAgentId() 
+            });
+            this.cachedSandboxClient = getSandboxService(
+                this.getSessionId(), 
+                this.getAgentId()
+            );
+        }
+        return this.cachedSandboxClient;
+    }
+
+    /**
      * Reset session ID (called on timeout or specific errors)
      */
     resetSessionId(): void {
@@ -60,6 +81,9 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         const newSessionId = this.generateNewSessionId();
         
         logger.info(`SessionId reset: ${oldSessionId} → ${newSessionId}`);
+        
+        // Invalidate cached sandbox client (tied to old sessionId)
+        this.cachedSandboxClient = null;
         
         // Update state
         this.setState({
@@ -87,6 +111,35 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         }
         
         logger.info("Waiting for preview completed");
+    }
+
+    /**
+     * Execute setup commands (used during redeployment)
+     */
+    async executeSetupCommands(sandboxInstanceId: string, timeoutMs: number = 60000): Promise<void> {
+        const { commandsHistory } = this.getState();
+        const logger = this.getLog();
+        const client = this.getClient();
+        
+        if (!commandsHistory || commandsHistory.length === 0) {
+            return;
+        }
+
+        let cmds = commandsHistory;
+        if (cmds.length > this.maxCommandsHistory) {
+            // Deduplicate
+            cmds = Array.from(new Set(commandsHistory));
+        }
+
+        logger.info(`Executing ${cmds.length} setup commands on instance ${sandboxInstanceId}`);
+
+        await this.withTimeout(
+            client.executeCommands(sandboxInstanceId, cmds),
+            timeoutMs,
+            'Command execution timed out'
+        );
+        
+        logger.info('Setup commands executed successfully');
     }
 
     /**
@@ -660,11 +713,6 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
             options,
             commitSha: exportResult.commitSha
         });
-
-        // Update readme with Cloudflare button if exists
-        // Note: This is handled by agent after this service returns
-        // Agent will redeploy and call this method again if needed
-
         return exportResult;
     }
 }

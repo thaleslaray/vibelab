@@ -24,7 +24,7 @@ export interface CloudflareDeploymentCallbacks {
 }
 
 /**
- * Parameters for deployment operation (internal use)
+ * Parameters for deployment operation
  */
 export interface DeploymentParams {
     files: FileOutputType[];
@@ -34,7 +34,7 @@ export interface DeploymentParams {
 }
 
 /**
- * Result from deployment/instance operations (internal use)
+ * Result from deployment/instance operations
  */
 export interface DeploymentResult {
     sandboxInstanceId: string;
@@ -61,13 +61,11 @@ export interface IDeploymentManager {
 
     /**
      * Run static analysis (lint + typecheck) on code
-     * Merged from AnalysisManager
      */
     runStaticAnalysis(files?: string[]): Promise<StaticAnalysisResponse>;
 
     /**
      * Fetch runtime errors from sandbox instance
-     * Merged from AnalysisManager
      */
     fetchRuntimeErrors(clear?: boolean): Promise<RuntimeError[]>;
 
@@ -77,7 +75,12 @@ export interface IDeploymentManager {
     waitForPreview(): Promise<void>;
 
     /**
-     * Deploy to sandbox with full orchestration
+     * Execute setup commands during redeployment
+     */
+    executeSetupCommands(sandboxInstanceId: string, timeoutMs?: number): Promise<void>;
+
+    /**
+     * Deploy to sandbox
      * Handles: queue, retry, timeout, sessionId reset, health checks
      * Callbacks allow agent to broadcast at the right times (after queue, when actually starting)
      */
@@ -96,7 +99,7 @@ export interface IDeploymentManager {
     deployToCloudflare(callbacks?: CloudflareDeploymentCallbacks): Promise<{ deploymentUrl: string | null; deploymentId?: string }>;
 
     /**
-     * Push to GitHub repository (handles both new and existing repos)
+     * Push to GitHub repository 
      */
     pushToGitHub(options: GitHubPushRequest): Promise<GitHubExportResult>;
 }

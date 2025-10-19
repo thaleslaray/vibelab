@@ -18,9 +18,7 @@ import { ProjectSetupAssistant } from '../assistants/projectsetup';
 import { UserConversationProcessor, RenderToolCall } from '../operations/UserConversationProcessor';
 import { FileManager } from '../services/implementations/FileManager';
 import { StateManager } from '../services/implementations/StateManager';
-import { CommandManager } from '../services/implementations/CommandManager';
 import { DeploymentManager } from '../services/implementations/DeploymentManager';
-import { ServiceOptions } from '../services/interfaces/IServiceOptions';
 // import { WebSocketBroadcaster } from '../services/implementations/WebSocketBroadcaster';
 import { GenerationContext } from '../domain/values/GenerationContext';
 import { IssueReport } from '../domain/values/IssueReport';
@@ -31,7 +29,6 @@ import { PhaseGenerationOperation } from '../operations/PhaseGeneration';
 import { ScreenshotAnalysisOperation } from '../operations/ScreenshotAnalysis';
 // Database schema imports removed - using zero-storage OAuth flow
 import { BaseSandboxService } from '../../services/sandbox/BaseSandboxService';
-import { getSandboxService } from '../../services/sandbox/factory';
 import { WebSocketMessageData, WebSocketMessageType } from '../../api/websocketTypes';
 import { InferenceContext, AgentActionKey } from '../inferutils/config.types';
 import { AGENT_CONFIG } from '../inferutils/config';
@@ -65,7 +62,7 @@ interface Operations {
 const DEFAULT_CONVERSATION_SESSION_ID = 'default';
 
 /**
- * SimpleCodeGeneratorAgent - Deterministically orhestrated agent
+ * SimpleCodeGeneratorAgent - Deterministically orchestrated agent
  * 
  * Manages the lifecycle of code generation including:
  * - Blueprint, phase generation, phase implementation, review cycles orchestrations
@@ -78,13 +75,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     private static readonly PROJECT_NAME_PREFIX_MAX_LENGTH = 20;
 
     protected projectSetupAssistant: ProjectSetupAssistant | undefined;
-    protected sandboxServiceClient: BaseSandboxService | undefined;
     protected stateManager!: StateManager;
     protected fileManager!: FileManager;
     protected codingAgent: CodingAgentInterface = new CodingAgentInterface(this);
     
-    // Service layer for business logic
-    protected commandManager!: CommandManager;
     protected deploymentManager!: DeploymentManager;
 
     private previewUrlCache: string = '';
@@ -154,59 +148,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         lastDeepDebugTranscript: null,
     };
 
-    /*
-    * Each DO has 10 gb of sqlite storage. However, the way agents sdk works, it stores the 'state' object of the agent as a single row
-    * in the cf_agents_state table. And row size has a much smaller limit in sqlite. Thus, we only keep current compactified conversation
-    * in the agent's core state and store the full conversation in a separate DO table.
-    */
-    getConversationState(id: string = DEFAULT_CONVERSATION_SESSION_ID): ConversationState {
-        const currentConversation = this.state.conversationMessages;
-        const rows = this.sql<{ messages: string, id: string }>`SELECT * FROM full_conversations WHERE id = ${id}`;
-        let fullHistory: ConversationMessage[] = [];
-        if (rows.length > 0 && rows[0].messages) {
-            try {
-                const parsed = JSON.parse(rows[0].messages);
-                if (Array.isArray(parsed)) {
-                    fullHistory = parsed as ConversationMessage[];
-                }
-            } catch (_e) {}
-        }
-        if (fullHistory.length === 0) {
-            fullHistory = currentConversation;
-        }
-        // Load compact (running) history from sqlite with fallback to in-memory state for migration
-        const compactRows = this.sql<{ messages: string, id: string }>`SELECT * FROM compact_conversations WHERE id = ${id}`;
-        let runningHistory: ConversationMessage[] = [];
-        if (compactRows.length > 0 && compactRows[0].messages) {
-            try {
-                const parsed = JSON.parse(compactRows[0].messages);
-                if (Array.isArray(parsed)) {
-                    runningHistory = parsed as ConversationMessage[];
-                }
-            } catch (_e) {}
-        }
-        if (runningHistory.length === 0) {
-            runningHistory = currentConversation;
-        }
-        return {
-            id: id,
-            runningHistory,
-            fullHistory,
-        };
-    }
-
-    setConversationState(conversations: ConversationState) {
-        const serializedFull = JSON.stringify(conversations.fullHistory);
-        const serializedCompact = JSON.stringify(conversations.runningHistory);
-        try {
-            this.logger().info(`Saving conversation state ${conversations.id}, full_length: ${serializedFull.length}, compact_length: ${serializedCompact.length}`);
-            this.sql`INSERT OR REPLACE INTO compact_conversations (id, messages) VALUES (${conversations.id}, ${serializedCompact})`;
-            this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${serializedFull})`;
-        } catch (error) {
-            this.logger().error(`Failed to save conversation state ${conversations.id}`, error);
-        }
-    }
-
     constructor(ctx: AgentContext, env: Env) {
         super(ctx, env);
         this.sql`CREATE TABLE IF NOT EXISTS full_conversations (id TEXT PRIMARY KEY, messages TEXT)`;
@@ -221,49 +162,18 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         // Initialize FileManager
         this.fileManager = new FileManager(this.stateManager);
         
-        // Initialize service layer
-        const serviceOptions: ServiceOptions = {
-            stateManager: this.stateManager,
-            fileManager: this.fileManager,
-            getSandboxClient: () => this.getSandboxServiceClient(),
-            getLogger: () => this.logger()
-        };
-        
-        this.commandManager = new CommandManager(
-            serviceOptions,
+        // Initialize DeploymentManager first (manages sandbox client caching)
+        // DeploymentManager will use its own getClient() override for caching
+        this.deploymentManager = new DeploymentManager(
+            {
+                stateManager: this.stateManager,
+                fileManager: this.fileManager,
+                getLogger: () => this.logger(),
+                env: this.env
+            },
+            SimpleCodeGeneratorAgent.PROJECT_NAME_PREFIX_MAX_LENGTH,
             SimpleCodeGeneratorAgent.MAX_COMMANDS_HISTORY
         );
-        this.deploymentManager = new DeploymentManager(
-            serviceOptions,
-            this.env,
-            SimpleCodeGeneratorAgent.PROJECT_NAME_PREFIX_MAX_LENGTH
-        );
-    }
-
-    async saveToDatabase() {
-        this.logger().info(`Blueprint generated successfully for agent ${this.getAgentId()}`);
-        // Save the app to database (authenticated users only)
-        const appService = new AppService(this.env);
-        await appService.createApp({
-            id: this.state.inferenceContext.agentId,
-            userId: this.state.inferenceContext.userId,
-            sessionToken: null,
-            title: this.state.blueprint.title || this.state.query.substring(0, 100),
-            description: this.state.blueprint.description || null,
-            originalPrompt: this.state.query,
-            finalPrompt: this.state.query,
-            framework: this.state.blueprint.frameworks?.[0],
-            visibility: 'private',
-            status: 'generating',
-            createdAt: new Date(),
-            updatedAt: new Date()
-        });
-        this.logger().info(`App saved successfully to database for agent ${this.state.inferenceContext.agentId}`, { 
-            agentId: this.state.inferenceContext.agentId, 
-            userId: this.state.inferenceContext.userId,
-            visibility: 'private'
-        });
-        this.logger().info(`Agent initialized successfully for agent ${this.state.inferenceContext.agentId}`);
     }
 
     /**
@@ -344,6 +254,85 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     async isInitialized() {
         return this.getAgentId() ? true : false
     }  
+
+    /*
+    * Each DO has 10 gb of sqlite storage. However, the way agents sdk works, it stores the 'state' object of the agent as a single row
+    * in the cf_agents_state table. And row size has a much smaller limit in sqlite. Thus, we only keep current compactified conversation
+    * in the agent's core state and store the full conversation in a separate DO table.
+    */
+    getConversationState(id: string = DEFAULT_CONVERSATION_SESSION_ID): ConversationState {
+        const currentConversation = this.state.conversationMessages;
+        const rows = this.sql<{ messages: string, id: string }>`SELECT * FROM full_conversations WHERE id = ${id}`;
+        let fullHistory: ConversationMessage[] = [];
+        if (rows.length > 0 && rows[0].messages) {
+            try {
+                const parsed = JSON.parse(rows[0].messages);
+                if (Array.isArray(parsed)) {
+                    fullHistory = parsed as ConversationMessage[];
+                }
+            } catch (_e) {}
+        }
+        if (fullHistory.length === 0) {
+            fullHistory = currentConversation;
+        }
+        // Load compact (running) history from sqlite with fallback to in-memory state for migration
+        const compactRows = this.sql<{ messages: string, id: string }>`SELECT * FROM compact_conversations WHERE id = ${id}`;
+        let runningHistory: ConversationMessage[] = [];
+        if (compactRows.length > 0 && compactRows[0].messages) {
+            try {
+                const parsed = JSON.parse(compactRows[0].messages);
+                if (Array.isArray(parsed)) {
+                    runningHistory = parsed as ConversationMessage[];
+                }
+            } catch (_e) {}
+        }
+        if (runningHistory.length === 0) {
+            runningHistory = currentConversation;
+        }
+        return {
+            id: id,
+            runningHistory,
+            fullHistory,
+        };
+    }
+
+    setConversationState(conversations: ConversationState) {
+        const serializedFull = JSON.stringify(conversations.fullHistory);
+        const serializedCompact = JSON.stringify(conversations.runningHistory);
+        try {
+            this.logger().info(`Saving conversation state ${conversations.id}, full_length: ${serializedFull.length}, compact_length: ${serializedCompact.length}`);
+            this.sql`INSERT OR REPLACE INTO compact_conversations (id, messages) VALUES (${conversations.id}, ${serializedCompact})`;
+            this.sql`INSERT OR REPLACE INTO full_conversations (id, messages) VALUES (${conversations.id}, ${serializedFull})`;
+        } catch (error) {
+            this.logger().error(`Failed to save conversation state ${conversations.id}`, error);
+        }
+    }
+
+    async saveToDatabase() {
+        this.logger().info(`Blueprint generated successfully for agent ${this.getAgentId()}`);
+        // Save the app to database (authenticated users only)
+        const appService = new AppService(this.env);
+        await appService.createApp({
+            id: this.state.inferenceContext.agentId,
+            userId: this.state.inferenceContext.userId,
+            sessionToken: null,
+            title: this.state.blueprint.title || this.state.query.substring(0, 100),
+            description: this.state.blueprint.description || null,
+            originalPrompt: this.state.query,
+            finalPrompt: this.state.query,
+            framework: this.state.blueprint.frameworks?.[0],
+            visibility: 'private',
+            status: 'generating',
+            createdAt: new Date(),
+            updatedAt: new Date()
+        });
+        this.logger().info(`App saved successfully to database for agent ${this.state.inferenceContext.agentId}`, { 
+            agentId: this.state.inferenceContext.agentId, 
+            userId: this.state.inferenceContext.userId,
+            visibility: 'private'
+        });
+        this.logger().info(`Agent initialized successfully for agent ${this.state.inferenceContext.agentId}`);
+    }
     
     onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {}
 
@@ -378,16 +367,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     getSessionId() {
-        // Delegate to deploymentManager which now manages sessionId
         return this.deploymentManager.getSessionId();
     }
 
     getSandboxServiceClient(): BaseSandboxService {
-        if (this.sandboxServiceClient === undefined) {
-            this.logger().info('Initializing sandbox service client');
-            this.sandboxServiceClient = getSandboxService(this.getSessionId(), this.getAgentId());
-        }
-        return this.sandboxServiceClient;
+        return this.deploymentManager.getClient();
     }
 
     isCodeGenerating(): boolean {
@@ -1667,18 +1651,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         };
     }
 
-    async waitForPreview(): Promise<void> {
-        this.logger().info("Waiting for preview");
-        if (!this.state.sandboxInstanceId) {
-            const preview = await this.deployToSandbox();
-            if (!preview) {
-                this.logger().error("Failed create preview");
-                return;
-            }
-        }
-        this.logger().info("Waiting for preview completed");
-    }
-
     async deployToSandbox(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, clearLogs: boolean = false): Promise<PreviewType | null> {
         // Call deployment manager with callbacks for broadcasting at the right times
         const result = await this.deploymentManager.deployToSandbox(
@@ -1788,6 +1760,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 this.logger().info("Deep debug session completed successfully");
             } catch (error) {
                 this.logger().error("Error during deep debug session:", error);
+            } finally {
+                // Clear promise after waiting completes
+                this.deepDebugPromise = null;
             }
         }
     }
@@ -1958,8 +1933,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info(`All commands executed successfully: ${successfulCommands.join(", ")}`);
         }
 
-        // Add commands to history via service
-        this.commandManager.addToHistory(successfulCommands);
+        this.setState({
+            ...this.state,
+            commandsHistory: [...(this.state.commandsHistory || []), ...successfulCommands]
+        });
     }
 
     async getLogs(_reset?: boolean, durationSeconds?: number): Promise<string> {
