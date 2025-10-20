@@ -35,19 +35,21 @@ export class StateMigration {
         }
 
         let migratedTemplateDetails = state.templateDetails;
-        if (migratedTemplateDetails?.files) {
-            const migratedTemplateFiles = migratedTemplateDetails.files.map(file => {
+        if ('files' in migratedTemplateDetails && migratedTemplateDetails?.files) {
+            const migratedTemplateFiles = (migratedTemplateDetails.files as Array<any>).map(file => {
                 const migratedFile = migrateFile(file);
-                if (migratedFile !== file) {
-                    needsMigration = true;
-                }
                 return migratedFile;
             });
+
+            const allFiles = migratedTemplateFiles.reduce((acc, file) => {
+                acc[file.filePath] = file;
+                return acc;
+            }, {} as Record<string, any>);
             
             if (needsMigration) {
                 migratedTemplateDetails = {
                     ...migratedTemplateDetails,
-                    files: migratedTemplateFiles
+                    allFiles
                 };
             }
         }
@@ -151,7 +153,7 @@ export class StateMigration {
         if (needsMigration) {
             logger.info('Migrating state: schema format, conversation cleanup, and security fixes', {
                 generatedFilesCount: Object.keys(migratedFilesMap).length,
-                templateFilesCount: migratedTemplateDetails?.files?.length || 0,
+                templateFilesCount: migratedTemplateDetails?.allFiles?.length || 0,
                 finalConversationCount: migratedConversationMessages?.length || 0,
                 removedUserApiKeys: state.inferenceContext && 'userApiKeys' in state.inferenceContext
             });

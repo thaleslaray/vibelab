@@ -1,16 +1,11 @@
 import { FileOutputType } from '../../schemas';
-import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
+// import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 
 /**
  * Interface for file management operations
  * Abstracts file storage and retrieval
  */
 export interface IFileManager {
-    /**
-     * Get a template file by path
-     */
-    getTemplateFile(path: string): { filePath: string; fileContents: string } | null;
-
     /**
      * Get a generated file by path
      */
@@ -35,12 +30,6 @@ export interface IFileManager {
      * Delete files from the file manager
      */
     deleteFiles(filePaths: string[]): void;
-
-    /**
-     * Get file contents by path (template or generated)
-     */
-    getFileContents(path: string): string;
-
     /**
      * Check if file exists (template or generated)
      */
@@ -50,12 +39,6 @@ export interface IFileManager {
      * Get all generated file paths
      */
     getGeneratedFilePaths(): string[];
-
-    /**
-     * Get template details
-     */
-    getTemplateDetails(): TemplateDetails | undefined;
-
     /**
      * Get generated files map
      */

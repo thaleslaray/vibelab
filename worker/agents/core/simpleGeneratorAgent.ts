@@ -210,8 +210,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }
         })
 
-        const packageJsonFile = templateInfo.templateDetails?.files.find(file => file.filePath === 'package.json');
-        const packageJson = packageJsonFile ? packageJsonFile.fileContents : '';
+        const packageJson = templateInfo.templateDetails?.allFiles['package.json'];
         
         this.setState({
             ...this.initialState,
@@ -1584,7 +1583,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         let fileContents = '';
         let filePurpose = '';
         try {
-            const fmFile = this.fileManager.getFile(path);
+            const fmFile = this.fileManager.getGeneratedFile(path);
             if (fmFile) {
                 fileContents = fmFile.fileContents;
                 filePurpose = fmFile.filePurpose || '';
@@ -1981,7 +1980,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             });
 
             // Prepare README with Cloudflare button BEFORE push (if it exists)
-            const readmeFile = this.fileManager.getFile('README.md');
+            const readmeFile = this.fileManager.getGeneratedFile('README.md');
             if (readmeFile && readmeFile.fileContents.includes('[cloudflarebutton]')) {
                 readmeFile.fileContents = readmeFile.fileContents.replaceAll(
                     '[cloudflarebutton]', 

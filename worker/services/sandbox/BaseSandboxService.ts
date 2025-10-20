@@ -29,11 +29,12 @@ import {
     ListInstancesResponse,
     GitHubPushRequest,
     GitHubPushResponse,
-  } from './sandboxTypes';
+} from './sandboxTypes';
   
-  import { createObjectLogger, StructuredLogger } from '../../logger';
-  import { env } from 'cloudflare:workers'
+import { createObjectLogger, StructuredLogger } from '../../logger';
+import { env } from 'cloudflare:workers'
 import { FileOutputType } from 'worker/agents/schemas';
+
   /**
    * Streaming event for enhanced command execution
    */
@@ -111,11 +112,11 @@ import { FileOutputType } from 'worker/agents/schemas';
         }
     }
   
-      /**
-       * Get details for a specific template including files and structure
-       * Returns: { success: boolean, templateDetails?: {...}, error?: string }
-       */
-      abstract getTemplateDetails(templateName: string): Promise<TemplateDetailsResponse>;
+    /**
+     * Get details for a specific template including files and structure
+     * Returns: { success: boolean, templateDetails?: {...}, error?: string }
+     */
+    abstract getTemplateDetails(templateName: string): Promise<TemplateDetailsResponse>;
   
     // ==========================================
     // INSTANCE LIFECYCLE (Required)
