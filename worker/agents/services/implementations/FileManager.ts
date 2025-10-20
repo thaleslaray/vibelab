@@ -2,7 +2,7 @@ import * as Diff from 'diff';
 import { IFileManager } from '../interfaces/IFileManager';
 import { IStateManager } from '../interfaces/IStateManager';
 import { FileOutputType } from '../../schemas';
-import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
+// import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 import { FileProcessing } from '../../domain/pure/FileProcessing';
 import { FileState } from 'worker/agents/core/state';
 
@@ -14,11 +14,6 @@ export class FileManager implements IFileManager {
     constructor(
         private stateManager: IStateManager
     ) {}
-
-    getTemplateFile(path: string): { filePath: string; fileContents: string } | null {
-        const state = this.stateManager.getState();
-        return state.templateDetails?.files?.find(file => file.filePath === path) || null;
-    }
 
     getGeneratedFile(path: string): FileOutputType | null {
         const state = this.stateManager.getState();
@@ -44,7 +39,8 @@ export class FileManager implements IFileManager {
             const oldFile = filesMap[file.filePath];
             
             // Get comparison base: from generatedFilesMap, template/filesystem, or empty string for new files
-            const oldFileContents = oldFile?.fileContents ?? (this.getFileContents(file.filePath) || '');
+            // TODO: fix checking against template files
+            const oldFileContents = oldFile?.fileContents ?? (this.getGeneratedFile(file.filePath)?.fileContents || '');
             
             // Generate diff if contents changed
             if (oldFileContents !== file.fileContents) {
@@ -90,42 +86,13 @@ export class FileManager implements IFileManager {
             generatedFilesMap: newFilesMap
         });
     }
-
-    getFile(path: string): FileOutputType | null {
-        const generatedFile = this.getGeneratedFile(path);
-        if (generatedFile) {
-            return generatedFile;
-        }
-        
-        const templateFile = this.getTemplateFile(path);
-        if (!templateFile) {
-            return null;
-        }
-        return {...templateFile, filePurpose: 'Template file'};
-    }
-    
-    getFileContents(path: string): string {
-        const generatedFile = this.getGeneratedFile(path);
-        if (generatedFile) {
-            return generatedFile.fileContents;
-        }
-        
-        const templateFile = this.getTemplateFile(path);
-        return templateFile?.fileContents || '';
-    }
-
     fileExists(path: string): boolean {
-        return !!this.getGeneratedFile(path) || !!this.getTemplateFile(path);
+        return !!this.getGeneratedFile(path)
     }
 
     getGeneratedFilePaths(): string[] {
         const state = this.stateManager.getState();
         return Object.keys(state.generatedFilesMap);
-    }
-
-    getTemplateDetails(): TemplateDetails | undefined {
-        const state = this.stateManager.getState();
-        return state.templateDetails;
     }
 
     getGeneratedFilesMap(): Record<string, FileOutputType> {

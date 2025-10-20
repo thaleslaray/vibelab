@@ -14,6 +14,7 @@ import { createLogger } from '../../../logger';
 import { getPreviewDomain } from 'worker/utils/urls';
 import { ImageType, uploadImage } from 'worker/utils/images';
 import { ProcessedImageAttachment } from 'worker/types/image-attachment';
+import { getTemplateImportantFiles } from 'worker/services/sandbox/utils';
 
 const defaultCodeGenArgs: CodeGenArgs = {
     query: '',
@@ -129,7 +130,7 @@ export class CodingAgentController extends BaseController {
                 httpStatusUrl,
                 template: {
                     name: templateDetails.name,
-                    files: templateDetails.files,
+                    files: getTemplateImportantFiles(templateDetails),
                 }
             });
 
