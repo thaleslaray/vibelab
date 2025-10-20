@@ -45,13 +45,15 @@ export class StateMigration {
                 acc[file.filePath] = file;
                 return acc;
             }, {} as Record<string, any>);
-            
-            if (needsMigration) {
-                migratedTemplateDetails = {
-                    ...migratedTemplateDetails,
-                    allFiles
-                };
-            }
+
+            migratedTemplateDetails = {
+                ...migratedTemplateDetails,
+                allFiles
+            };
+
+            // Remove 'files' property
+            delete (migratedTemplateDetails as any).files;
+            needsMigration = true;
         }
 
         let migratedConversationMessages = state.conversationMessages;
