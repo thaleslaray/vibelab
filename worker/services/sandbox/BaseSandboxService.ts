@@ -189,7 +189,7 @@ import { FileOutputType } from 'worker/agents/schemas';
      * Get all runtime errors from an instance
      * Returns: { success: boolean, errors: [...], hasErrors: boolean, error?: string }
      */
-    abstract getInstanceErrors(instanceId: string): Promise<RuntimeErrorResponse>;
+    abstract getInstanceErrors(instanceId: string, clear?: boolean): Promise<RuntimeErrorResponse>;
   
     /**
      * Clear all runtime errors from an instance
