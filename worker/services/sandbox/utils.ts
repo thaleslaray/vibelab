@@ -6,3 +6,10 @@ export function getTemplateImportantFiles(templateDetails: TemplateDetails): Tem
         fileContents: templateDetails.allFiles[filePath],
     }));
 }
+
+export function getTemplateFiles(templateDetails: TemplateDetails): TemplateFile[] {
+    return Object.entries(templateDetails.allFiles).map(([filePath, fileContents]) => ({
+        filePath,
+        fileContents,
+    }));
+}
