@@ -1,7 +1,7 @@
 import { FileTreeNode, RuntimeError, StaticAnalysisResponse, TemplateDetails } from "../services/sandbox/sandboxTypes";
 import { TemplateRegistry } from "./inferutils/schemaFormatters";
 import z from 'zod';
-import { Blueprint, BlueprintSchema, ClientReportedErrorSchema, ClientReportedErrorType, FileOutputType, PhaseConceptSchema, PhaseConceptType, TemplateSelection } from "./schemas";
+import { Blueprint, BlueprintSchema, FileOutputType, PhaseConceptSchema, PhaseConceptType, TemplateSelection } from "./schemas";
 import { IssueReport } from "./domain/values/IssueReport";
 import { FileState, MAX_PHASES } from "./core/state";
 import { CODE_SERIALIZERS, CodeSerializerType } from "./utils/codeSerializers";
@@ -130,18 +130,6 @@ ${lintOutput}
 
 **TYPE CHECK ANALYSIS:**
 ${typecheckOutput}`;
-    },
-
-    serializeClientReportedErrors(errors: ClientReportedErrorType[]): string {
-        if (errors && errors.length > 0) {
-            const errorsText = TemplateRegistry.markdown.serialize(
-                { errors },
-                z.object({ errors: z.array(ClientReportedErrorSchema) })
-            );
-            return errorsText;
-        } else {
-            return 'No client-reported errors';
-        }
     },
 
     verifyPrompt(prompt: string): string {

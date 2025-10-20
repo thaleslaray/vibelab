@@ -30,11 +30,10 @@ export const TemplateDetailsSchema = z.object({
         usage: z.string(),
     }),
     fileTree: FileTreeNodeSchema,
-    allFiles: z.record(z.string(), z.string()), // Map of filePath -> fileContents
+    files: z.array(TemplateFileSchema),
     language: z.string().optional(),
     deps: z.record(z.string(), z.string()),
     frameworks: z.array(z.string()).optional(),
-    importantFiles: z.array(z.string()),
     dontTouchFiles: z.array(z.string()),
     redactedFiles: z.array(z.string()),
 })

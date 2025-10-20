@@ -1,4 +1,4 @@
-import type { Blueprint, ClientReportedErrorType, PhaseConceptType ,
+import type { Blueprint, PhaseConceptType ,
     FileOutputType,
 } from '../schemas';
 import type { TemplateDetails } from '../../services/sandbox/sandboxTypes';
@@ -38,10 +38,7 @@ export interface CodeGenState {
     lastPackageJson?: string; // Last package.json file contents
     templateDetails: TemplateDetails;   // TODO: Remove this from state and rely on directly fetching from sandbox
     sandboxInstanceId?: string;
-    // previewURL?: string;
-    // tunnelURL?: string;
-    clientReportedErrors: ClientReportedErrorType[];
-    // latestScreenshot?: ScreenshotData; // Store captured screenshot
+    
     shouldBeGenerating: boolean; // Persistent flag indicating generation should be active
     mvpGenerated: boolean;
     reviewingInitiated: boolean;

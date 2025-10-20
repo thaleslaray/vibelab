@@ -490,7 +490,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         `Lint Issues: ${JSON.stringify(message.staticAnalysis?.lint?.issues)}`,
                         `Type Errors: ${JSON.stringify(message.staticAnalysis?.typecheck?.issues)}`,
                         `Runtime Errors: ${JSON.stringify(message.runtimeErrors)}`,
-                        `Client Errors: ${JSON.stringify(message.clientErrors)}`,
                     ].filter(Boolean).join('\n');
 
                     onDebugMessage?.('warning',
