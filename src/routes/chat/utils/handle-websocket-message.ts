@@ -168,8 +168,13 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         setQuery(state.query);
                     }
 
-                    if (state.templateDetails?.files && bootstrapFiles.length === 0) {
-                        loadBootstrapFiles(state.templateDetails.files);
+                    if (state.templateDetails?.allFiles && bootstrapFiles.length === 0) {
+                        const files = Object.entries(state.templateDetails.allFiles).map(([filePath, fileContents]) => ({
+                            filePath,
+                            fileContents,
+                        }));
+                        logger.debug('📥 Restoring bootstrap files:', files);
+                        loadBootstrapFiles(files);
                     }
 
                     if (state.generatedFilesMap && files.length === 0) {
