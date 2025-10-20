@@ -185,7 +185,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         ..._args: unknown[]
     ): Promise<CodeGenState> {
 
-        const { query, language, frameworks, hostname, inferenceContext, templateInfo, sandboxSessionId } = initArgs;
+        const { query, language, frameworks, hostname, inferenceContext, templateInfo } = initArgs;
+        const sandboxSessionId = inferenceContext.agentId; // Let the initial sessionId be the agentId
         this.initLogger(inferenceContext.agentId, sandboxSessionId, inferenceContext.userId);
         
         // Generate a blueprint

@@ -111,7 +111,7 @@ export class CodingAgentController extends BaseController {
                 modelConfigsCount: Object.keys(userModelConfigs).length,
             });
 
-            const { sandboxSessionId, templateDetails, selection } = await getTemplateForQuery(env, inferenceContext, query, body.images, this.logger);
+            const { templateDetails, selection } = await getTemplateForQuery(env, inferenceContext, query, body.images, this.logger);
 
             const websocketUrl = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}/api/agent/${agentId}/ws`;
             const httpStatusUrl = `${url.origin}/api/agent/${agentId}`;
@@ -145,7 +145,6 @@ export class CodingAgentController extends BaseController {
                     writer.write({chunk});
                 },
                 templateInfo: { templateDetails, selection },
-                sandboxSessionId
             }, body.agentMode || defaultCodeGenArgs.agentMode) as Promise<CodeGenState>;
             agentPromise.then(async (_state: CodeGenState) => {
                 writer.write("terminate");

@@ -18,7 +18,6 @@ export interface AgentInitArgs {
         templateDetails: TemplateDetails;
         selection: TemplateSelection;
     }
-    sandboxSessionId: string
     images?: ProcessedImageAttachment[];
     onBlueprintChunk: (chunk: string) => void;
 }
