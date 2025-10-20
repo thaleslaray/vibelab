@@ -1,4 +1,4 @@
-import type { Blueprint, ClientReportedErrorType, PhaseConceptType ,
+import type { Blueprint, PhaseConceptType ,
     FileOutputType,
 } from '../schemas';
 import type { TemplateDetails } from '../../services/sandbox/sandboxTypes';
@@ -40,7 +40,6 @@ export interface CodeGenState {
     sandboxInstanceId?: string;
     // previewURL?: string;
     // tunnelURL?: string;
-    clientReportedErrors: ClientReportedErrorType[];
     // latestScreenshot?: ScreenshotData; // Store captured screenshot
     shouldBeGenerating: boolean; // Persistent flag indicating generation should be active
     mvpGenerated: boolean;

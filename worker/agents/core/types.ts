@@ -1,6 +1,6 @@
 
 import type { RuntimeError, StaticAnalysisResponse } from '../../services/sandbox/sandboxTypes';
-import type { ClientReportedErrorType, FileOutputType, PhaseConceptType } from '../schemas';
+import type { FileOutputType, PhaseConceptType } from '../schemas';
 import type { ConversationMessage } from '../inferutils/common';
 import type { InferenceContext } from '../inferutils/config.types';
 import type { TemplateDetails } from '../../services/sandbox/sandboxTypes';
@@ -26,7 +26,6 @@ export interface AgentInitArgs {
 export interface AllIssues {
     runtimeErrors: RuntimeError[];
     staticAnalysis: StaticAnalysisResponse;
-    clientErrors: ClientReportedErrorType[];
 }
 
 /**
