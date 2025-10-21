@@ -37,7 +37,7 @@ export class GenerationContext {
             logger
         );
 
-        const allFiles = FileProcessing.getAllFiles(
+        const allFiles = FileProcessing.getAllRelevantFiles(
             templateDetails,
             state.generatedFilesMap
         );

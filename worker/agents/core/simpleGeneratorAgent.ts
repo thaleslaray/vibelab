@@ -33,7 +33,7 @@ import { WebSocketMessageData, WebSocketMessageType } from '../../api/websocketT
 import { InferenceContext, AgentActionKey } from '../inferutils/config.types';
 import { AGENT_CONFIG } from '../inferutils/config';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
-import { FileFetcher, fixProjectIssues } from '../../services/code-fixer';
+import { fixProjectIssues } from '../../services/code-fixer';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand } from '../utils/common';
 import { generateBlueprint } from '../planning/blueprint';
@@ -1394,7 +1394,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 return;
             }
             const issues = staticAnalysis.typecheck.issues.concat(staticAnalysis.lint.issues);
-            const allFiles = this.fileManager.getAllFiles();
+            const allFiles = this.fileManager.getAllRelevantFiles();
 
             const fastCodeFixer = await this.operations.fastCodeFixer.execute({
                 query: this.state.query,
@@ -1434,35 +1434,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info(`Attempting to fix ${typeCheckIssues.length} TypeScript issues using deterministic code fixer`);
             const allFiles = this.fileManager.getAllFiles();
 
-            // Create file fetcher callback
-            const fileFetcher: FileFetcher = async (filePath: string) => {
-                // Fetch a single file from the instance
-                try {
-                    const result = await this.getSandboxServiceClient().getFiles(this.state.sandboxInstanceId!, [filePath]);
-                    if (result.success && result.files.length > 0) {
-                        this.logger().info(`Successfully fetched file: ${filePath}`);
-                        return {
-                            filePath: filePath,
-                            fileContents: result.files[0].fileContents,
-                            filePurpose: `Fetched file: ${filePath}`
-                        };
-                    } else {
-                        this.logger().debug(`File not found: ${filePath}`);
-                    }
-                } catch (error) {
-                    this.logger().debug(`Failed to fetch file ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-                return null;
-            };
-            
-            const fixResult = await fixProjectIssues(
+            const fixResult = fixProjectIssues(
                 allFiles.map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents,
                     filePurpose: ''
                 })),
-                typeCheckIssues,
-                fileFetcher
+                typeCheckIssues
             );
 
             this.broadcast(WebSocketMessageResponses.DETERMINISTIC_CODE_FIX_COMPLETED, {
