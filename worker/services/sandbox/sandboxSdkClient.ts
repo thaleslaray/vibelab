@@ -37,7 +37,7 @@ import {
 import { 
     createAssetManifest 
 } from '../deployer/utils/index';
-import { CodeFixResult, FileFetcher, fixProjectIssues } from '../code-fixer';
+import { CodeFixResult, fixProjectIssues } from '../code-fixer';
 import { FileObject } from '../code-fixer/types';
 import { generateId } from '../../utils/idGenerator';
 import { ResourceProvisioner } from './resourceProvisioner';
@@ -1716,35 +1716,14 @@ export class SandboxSdkClient extends BaseSandboxService {
             
             // Create file fetcher callback
             const session = await this.getInstanceSession(instanceId);
-            const fileFetcher: FileFetcher = async (filePath: string) => {
-                // Fetch a single file from the instance
-                try {
-                    const result = await session.readFile(`/workspace/${instanceId}/${filePath}`);  
-                    if (result.success) {
-                        this.logger.info(`Successfully fetched file: ${filePath}`);
-                        return {
-                            filePath: filePath,
-                            fileContents: result.content,
-                            filePurpose: `Fetched file: ${filePath}`
-                        };
-                    } else {
-                        this.logger.debug(`File not found: ${filePath}`);
-                    }
-                } catch (error) {
-                    this.logger.debug(`Failed to fetch file ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-                return null;
-            };
-
             // Use the new functional API
-            const fixResult = await fixProjectIssues(
+            const fixResult = fixProjectIssues(
                 files.map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents,
                     filePurpose: ''
                 })),
                 analysisResult.typecheck.issues,
-                fileFetcher
             );
             for (const file of fixResult.modifiedFiles) {
                 await session.writeFile(`/workspace/${instanceId}/${file.filePath}`, file.fileContents);
