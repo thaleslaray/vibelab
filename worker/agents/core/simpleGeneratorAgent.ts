@@ -445,7 +445,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return {
             env: this.env,
             agentId: this.getAgentId(),
-            context: GenerationContext.from(this.state, this.logger()),
+            context: GenerationContext.from(this.state, this.getTemplateDetails(), this.logger()),
             logger: this.logger(),
             inferenceContext: this.getInferenceContext(),
             agent: this.codingAgent
