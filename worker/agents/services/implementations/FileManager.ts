@@ -2,9 +2,9 @@ import * as Diff from 'diff';
 import { IFileManager } from '../interfaces/IFileManager';
 import { IStateManager } from '../interfaces/IStateManager';
 import { FileOutputType } from '../../schemas';
-// import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 import { FileProcessing } from '../../domain/pure/FileProcessing';
 import { FileState } from 'worker/agents/core/state';
+import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 
 /**
  * Manages file operations for code generation
@@ -12,7 +12,8 @@ import { FileState } from 'worker/agents/core/state';
  */
 export class FileManager implements IFileManager {
     constructor(
-        private stateManager: IStateManager
+        private stateManager: IStateManager,
+        private getTemplateDetailsFunc: () => TemplateDetails
     ) {}
 
     getGeneratedFile(path: string): FileOutputType | null {
@@ -22,7 +23,7 @@ export class FileManager implements IFileManager {
 
     getAllFiles(): FileOutputType[] {
         const state = this.stateManager.getState();
-        return FileProcessing.getAllFiles(state.templateDetails, state.generatedFilesMap);
+        return FileProcessing.getAllFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
     }
 
     saveGeneratedFile(file: FileOutputType): FileState {
@@ -86,6 +87,7 @@ export class FileManager implements IFileManager {
             generatedFilesMap: newFilesMap
         });
     }
+
     fileExists(path: string): boolean {
         return !!this.getGeneratedFile(path)
     }

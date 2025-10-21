@@ -1,7 +1,7 @@
 import type { CodeReviewOutputType, FileConceptType, FileOutputType } from "../agents/schemas";
 import type { CodeGenState } from "../agents/core/state";
 import type { ConversationState } from "../agents/inferutils/common";
-import type { CodeIssue, RuntimeError, StaticAnalysisResponse } from "../services/sandbox/sandboxTypes";
+import type { CodeIssue, RuntimeError, StaticAnalysisResponse, TemplateDetails } from "../services/sandbox/sandboxTypes";
 import type { CodeFixResult } from "../services/code-fixer";
 import { IssueReport } from "../agents/domain/values/IssueReport";
 import type { RateLimitExceededError } from 'shared/types/errors';
@@ -14,6 +14,12 @@ type ErrorMessage = {
 type StateMessage = {
 	type: 'cf_agent_state';
 	state: CodeGenState;
+};
+
+type AgentConnectedMessage = {
+    type: 'agent_connected';
+    state: CodeGenState;
+    templateDetails: TemplateDetails;
 };
 
 type ConversationStateMessage = {
@@ -408,6 +414,7 @@ type ServerLogMessage = {
 
 export type WebSocketMessage =
 	| StateMessage
+	| AgentConnectedMessage
 	| ConversationStateMessage
 	| GenerationStartedMessage
 	| FileGeneratingMessage

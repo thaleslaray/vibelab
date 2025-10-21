@@ -38,32 +38,34 @@ import { FileOutputType } from 'worker/agents/schemas';
 import { ZipExtractor } from './zipExtractor';
 import { FileTreeBuilder } from './fileTreeBuilder';
 
-  /**
-   * Streaming event for enhanced command execution
-   */
-  export interface StreamEvent {
+/**
+ * Streaming event for enhanced command execution
+ */
+export interface StreamEvent {
     type: 'stdout' | 'stderr' | 'exit' | 'error';
     data?: string;
     code?: number;
     error?: string;
     timestamp: Date;
-  }
+}
   
-  export interface TemplateInfo {
-      name: string;
-      language?: string;
-      frameworks?: string[];
-      description: {
-          selection: string;
-          usage: string;
-      };
-  }
+export interface TemplateInfo {
+    name: string;
+    language?: string;
+    frameworks?: string[];
+    description: {
+        selection: string;
+        usage: string;
+    };
+}
+
+const templateDetailsCache: Record<string, TemplateDetails> = {};
   
-  /**
-   * Abstract base class providing complete RunnerService API compatibility
-   * All implementations MUST support every method defined here
-   */
-  export abstract class BaseSandboxService {
+/**
+ * Abstract base class providing complete RunnerService API compatibility
+ * All implementations MUST support every method defined here
+*/
+export abstract class BaseSandboxService {
     protected logger: StructuredLogger;
     protected sandboxId: string;
   
@@ -122,6 +124,13 @@ import { FileTreeBuilder } from './fileTreeBuilder';
      */
     static async getTemplateDetails(templateName: string, downloadDir?: string): Promise<TemplateDetailsResponse> {
         try {
+            if (templateDetailsCache[templateName]) {
+                console.log(`Template details for template: ${templateName} found in cache`);
+                return {
+                    success: true,
+                    templateDetails: templateDetailsCache[templateName]
+                };
+            }
             // Download template zip from R2
             const downloadUrl = downloadDir ? `${downloadDir}/${templateName}.zip` : `${templateName}.zip`;
             const r2Object = await env.TEMPLATES_BUCKET.get(downloadUrl);
@@ -186,6 +195,8 @@ import { FileTreeBuilder } from './fileTreeBuilder';
                 redactedFiles,
                 frameworks: catalogInfo?.frameworks || []
             };
+
+            templateDetailsCache[templateName] = templateDetails;
 
             return {
                 success: true,
@@ -307,4 +318,4 @@ import { FileTreeBuilder } from './fileTreeBuilder';
      * Push instance files to existing GitHub repository
      */
     abstract pushToGitHub(instanceId: string, request: GitHubPushRequest, files: FileOutputType[]): Promise<GitHubPushResponse>
-  }
+}

@@ -1,4 +1,4 @@
-import { Agent, AgentContext, Connection } from 'agents';
+import { Agent, AgentContext, Connection, ConnectionContext } from 'agents';
 import { 
     Blueprint, 
     PhaseConceptGenerationSchemaType, 
@@ -12,7 +12,7 @@ import {  GitHubExportResult } from '../../services/github/types';
 import { CodeGenState, CurrentDevState, MAX_PHASES } from './state';
 import { AllIssues, AgentSummary, AgentInitArgs, PhaseExecutionResult, UserContext } from './types';
 import { PREVIEW_EXPIRED_ERROR, WebSocketMessageResponses } from '../constants';
-import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage } from './websocket';
+import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage, sendToConnection } from './websocket';
 import { createObjectLogger, StructuredLogger } from '../../logger';
 import { ProjectSetupAssistant } from '../assistants/projectsetup';
 import { UserConversationProcessor, RenderToolCall } from '../operations/UserConversationProcessor';
@@ -82,6 +82,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     protected deploymentManager!: DeploymentManager;
 
     private previewUrlCache: string = '';
+    private templateDetailsCache: TemplateDetails | null = null;
     
     // In-memory storage for user-uploaded images (not persisted in DO state)
     private pendingUserImages: ProcessedImageAttachment[] = []
@@ -131,7 +132,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         generatedFilesMap: {},
         agentMode: 'deterministic',
         sandboxInstanceId: undefined,
-        templateDetails: {} as TemplateDetails,
+        templateName: '',
         commandsHistory: [],
         lastPackageJson: '',
         pendingUserInputs: [],
@@ -160,7 +161,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         );
         
         // Initialize FileManager
-        this.fileManager = new FileManager(this.stateManager);
+        this.fileManager = new FileManager(this.stateManager, () => this.getTemplateDetails());
         
         // Initialize DeploymentManager first (manages sandbox client caching)
         // DeploymentManager will use its own getClient() override for caching
@@ -212,12 +213,14 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         })
 
         const packageJson = templateInfo.templateDetails?.allFiles['package.json'];
+
+        this.templateDetailsCache = templateInfo.templateDetails;
         
         this.setState({
             ...this.initialState,
             query,
             blueprint,
-            templateDetails: templateInfo.templateDetails,
+            templateName: templateInfo.templateDetails.name,
             sandboxInstanceId: undefined,
             generatedPhases: [],
             commandsHistory: [],
@@ -253,7 +256,59 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     async isInitialized() {
         return this.getAgentId() ? true : false
-    }  
+    }
+
+    async onStart(_props?: Record<string, unknown> | undefined): Promise<void> {
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`);
+        // Ignore if agent not initialized
+        if (!this.isInitialized()) {
+            this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
+            return;
+        }
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart being processed`);
+        // Fill the template cache
+        await this.ensureTemplateDetails();
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart processed successfully`);
+    }
+    
+    onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {}
+
+    setState(state: CodeGenState): void {
+        try {
+            super.setState(state);
+        } catch (error) {
+            this.broadcastError("Error setting state", error);
+            this.logger().error("State details:", {
+                originalState: JSON.stringify(this.state, null, 2),
+                newState: JSON.stringify(state, null, 2)
+            });
+        }
+    }
+
+    onConnect(connection: Connection, ctx: ConnectionContext) {
+        this.logger().info(`Agent connected for agent ${this.getAgentId()}`, { connection, ctx });
+        sendToConnection(connection, 'agent_connected', {
+            state: this.state,
+            templateDetails: this.getTemplateDetails()
+        });
+    }
+
+    async ensureTemplateDetails() {
+        if (!this.templateDetailsCache) {
+            this.logger().info(`Template details being cached for template: ${this.state.templateName}`);
+            const results = await BaseSandboxService.getTemplateDetails(this.state.templateName);
+            if (!results.success || !results.templateDetails) {
+                throw new Error(`Failed to get template details for template: ${this.state.templateName}`);
+            }
+            this.templateDetailsCache = results.templateDetails;
+            this.logger().info(`Template details for template: ${this.state.templateName} cached successfully`);
+        }
+        return this.templateDetailsCache;
+    }
+
+    private getTemplateDetails() {
+        return this.templateDetailsCache!;
+    }
 
     /*
     * Each DO has 10 gb of sqlite storage. However, the way agents sdk works, it stores the 'state' object of the agent as a single row
@@ -333,20 +388,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
         this.logger().info(`Agent initialized successfully for agent ${this.state.inferenceContext.agentId}`);
     }
-    
-    onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {}
-
-    setState(state: CodeGenState): void {
-        try {
-            super.setState(state);
-        } catch (error) {
-            this.broadcastError("Error setting state", error);
-            this.logger().error("State details:", {
-                originalState: JSON.stringify(this.state, null, 2),
-                newState: JSON.stringify(state, null, 2)
-            });
-        }
-    }
 
     getPreviewUrlCache() {
         return this.previewUrlCache;
@@ -359,7 +400,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 agentId: this.getAgentId(),
                 query: this.state.query,
                 blueprint: this.state.blueprint,
-                template: this.state.templateDetails,
+                template: this.getTemplateDetails(),
                 inferenceContext: this.state.inferenceContext
             });
         }

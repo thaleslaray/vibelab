@@ -517,7 +517,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
      */
     private async createNewInstance(): Promise<BootstrapResponse | null> {
         const state = this.getState();
-        const templateName = state.templateDetails?.name || 'scratch';
+        const templateName = state.templateName || 'scratch';
         
         // Generate unique project name
         let prefix = (state.blueprint?.projectName || templateName)
@@ -532,7 +532,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
 
         // Add AI proxy vars if AI template
         let localEnvVars: Record<string, string> = {};
-        if (state.templateDetails?.name?.includes('agents')) {
+        if (state.templateName?.includes('agents')) {
             localEnvVars = {
                 "CF_AI_BASE_URL": generateAppProxyUrl(this.env),
                 "CF_AI_API_KEY": await generateAppProxyToken(

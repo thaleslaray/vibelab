@@ -152,10 +152,10 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 }));
                 break;
             }
-            case 'cf_agent_state': {
-                const { state } = message;
-                logger.debug('🔄 Agent state update received:', state);
-
+            case 'agent_connected': {
+                const { state, templateDetails } = message;
+                console.log('Agent connected', state, templateDetails);
+                
                 if (!isInitialStateRestored) {
                     logger.debug('📥 Performing initial state restoration');
                     
@@ -168,11 +168,11 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         setQuery(state.query);
                     }
 
-                    if (state.templateDetails?.allFiles && bootstrapFiles.length === 0) {
-                        const files = Object.entries(state.templateDetails.allFiles).map(([filePath, fileContents]) => ({
+                    if (templateDetails?.allFiles && bootstrapFiles.length === 0) {
+                        const files = Object.entries(templateDetails.allFiles).map(([filePath, fileContents]) => ({
                             filePath,
                             fileContents,
-                        }));
+                        })).filter((file) => templateDetails.importantFiles.includes(file.filePath));
                         logger.debug('📥 Restoring bootstrap files:', files);
                         loadBootstrapFiles(files);
                     }
@@ -254,6 +254,11 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         sendWebSocketMessage(websocket, 'preview');
                     }
                 }
+                break;
+            }
+            case 'cf_agent_state': {
+                const { state } = message;
+                logger.debug('🔄 Agent state update received:', state);
 
                 if (state.shouldBeGenerating) {
                     logger.debug('🔄 shouldBeGenerating=true detected, auto-resuming generation');
