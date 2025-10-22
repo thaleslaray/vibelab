@@ -122,7 +122,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     getAgentId() {
-        return this.state.inferenceContext.agentId
+        return this.state.inferenceContext.agentId;
     }
 
     initialState: CodeGenState = {
@@ -261,11 +261,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     async onStart(_props?: Record<string, unknown> | undefined): Promise<void> {
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`);
         // Ignore if agent not initialized
-        if (!this.isInitialized()) {
+        if (!this.state.templateName?.trim()) {
             this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
             return;
         }
-        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart being processed`);
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart being processed, template name: ${this.state.templateName}`);
         // Fill the template cache
         await this.ensureTemplateDetails();
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart processed successfully`);
