@@ -108,6 +108,23 @@ These are the only dependencies, components and plugins available for the projec
 
 const USER_PROMPT = `**Phase Implementation**
 
+<PRE-IMPLEMENTATION VALIDATION>
+⚠️⚠️⚠️ SCAN YOUR MENTAL CODE DRAFT FOR THESE PATTERNS BEFORE WRITING ⚠️⚠️⚠️
+
+🔍 FORBIDDEN ZUSTAND PATTERNS (auto-fail if found):
+   • useStore(s => ({ ... }))  ← Creating object in selector
+   • useStore()  ← No selector
+   • useStore(s => s.getItems())  ← Calling methods
+   • const { a, b } = useStore(...)  ← Destructuring multiple values
+   • useStore(useShallow)
+
+✅ ONLY ALLOWED ZUSTAND PATTERN:
+   • useStore(s => s.singlePrimitive)  ← One primitive per call
+   • Call useStore multiple times for multiple values
+
+If you find forbidden patterns in your draft, STOP and rewrite before generating files.
+</PRE-IMPLEMENTATION VALIDATION>
+
 <INSTRUCTIONS & CODE QUALITY STANDARDS>
 These are the instructions and quality standards that must be followed to implement this phase.
 **CRITICAL ERROR PREVENTION (Fix These First):**
@@ -117,10 +134,12 @@ These are the instructions and quality standards that must be followed to implem
         - Never call setState during render phase
         - Always use dependency arrays in useEffect with conditional guards
         - Stabilize object/array references with useMemo/useCallback
-        - **Zustand: Select ONLY primitives individually**
-        - Never use the store without a selector (selecting whole state is forbidden)
-        - Do not allocate objects/arrays or call store methods inside selectors
-        - If selecting an object, only store-owned and stable with shallow equality (no allocation)
+        - **🔥 ZUSTAND ABSOLUTE RULE - NO EXCEPTIONS 🔥**
+          • ONLY ALLOWED: useStore(s => s.primitive) - one primitive per call
+          • BANNED: useStore(s => ({ ... })) - object literals crash the app
+          • BANNED: useStore() - no selector crashes the app  
+          • BANNED: useStore(s => s.getXxx()) - method calls crash the app
+          • For multiple values: Call useStore multiple times (this is correct and efficient)
         - DOM listeners must be stable: attach once; read store values via refs; avoid reattaching per state change
     
     2. **Variable Declaration Order** - CRITICAL
