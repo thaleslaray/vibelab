@@ -9,6 +9,18 @@ export class ZipExtractor {
     // Max uncompressed size (50MB)
     private static readonly MAX_UNCOMPRESSED_SIZE = 50 * 1024 * 1024;
 
+    // Known binary file extensions - skip UTF-8 decode attempt
+    private static readonly BINARY_EXTENSIONS = new Set([
+        '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.bmp',
+        '.woff', '.woff2', '.ttf', '.otf', '.eot',
+        '.zip', '.tar', '.gz', '.pdf',
+        '.mp3', '.mp4', '.webm', '.ogg',
+        '.bin', '.exe', '.dll', '.so'
+    ]);
+
+    // TextDecoder
+    private static readonly utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
+
     /**
      * Extracts all files from a zip archive
      * 
@@ -43,21 +55,20 @@ export class ZipExtractor {
                 
                 let fileContents: string;
                 
-                // Attempt UTF-8 decoding
-                try {
-                    const decoder = new TextDecoder('utf-8');
-                    fileContents = decoder.decode(fileData);
-                    
-                    // Replacement character indicates invalid UTF-8 sequence (binary data)
-                    if (fileContents.includes('\uFFFD')) {
-                        throw new Error('Contains replacement characters');
+                // Check if file extension is known binary
+                const isBinary = this.isBinaryExtension(filePath);
+                
+                if (isBinary) {
+                    // Skip UTF-8 decode attempt, go straight to base64
+                    fileContents = `base64:${this.base64Encode(fileData)}`;
+                } else {
+                    // Attempt UTF-8 decoding with fatal mode (throws on invalid)
+                    try {
+                        fileContents = this.utf8Decoder.decode(fileData);
+                    } catch {
+                        // Binary file detected, encode as base64
+                        fileContents = `base64:${this.base64Encode(fileData)}`;
                     }
-                } catch (error) {
-                    // Binary file detected, encode as base64
-                    const binaryString = Array.from(fileData)
-                        .map(byte => String.fromCharCode(byte))
-                        .join('');
-                    fileContents = `base64:${btoa(binaryString)}`;
                 }
                 
                 files.push({
@@ -109,4 +120,31 @@ export class ZipExtractor {
         return fileContents.startsWith('base64:');
     }
 
+    /**
+     * check if file extension is known binary type
+     */
+    private static isBinaryExtension(filePath: string): boolean {
+        const lastDot = filePath.lastIndexOf('.');
+        if (lastDot === -1) return false;
+        
+        const ext = filePath.substring(lastDot).toLowerCase();
+        return this.BINARY_EXTENSIONS.has(ext);
+    }
+
+    /**
+     * base64 encoding
+     */
+    private static base64Encode(data: Uint8Array): string {
+        let binaryString = '';
+        const len = data.length;
+        
+        // Process in chunks
+        const chunkSize = 8192;
+        for (let i = 0; i < len; i += chunkSize) {
+            const chunk = data.subarray(i, Math.min(i + chunkSize, len));
+            binaryString += String.fromCharCode(...chunk);
+        }
+        
+        return btoa(binaryString);
+    }
 }

@@ -1,4 +1,4 @@
-import { Agent, AgentContext, Connection } from 'agents';
+import { Agent, AgentContext, Connection, ConnectionContext } from 'agents';
 import { 
     Blueprint, 
     PhaseConceptGenerationSchemaType, 
@@ -12,7 +12,7 @@ import {  GitHubExportResult } from '../../services/github/types';
 import { CodeGenState, CurrentDevState, MAX_PHASES } from './state';
 import { AllIssues, AgentSummary, AgentInitArgs, PhaseExecutionResult, UserContext } from './types';
 import { PREVIEW_EXPIRED_ERROR, WebSocketMessageResponses } from '../constants';
-import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage } from './websocket';
+import { broadcastToConnections, handleWebSocketClose, handleWebSocketMessage, sendToConnection } from './websocket';
 import { createObjectLogger, StructuredLogger } from '../../logger';
 import { ProjectSetupAssistant } from '../assistants/projectsetup';
 import { UserConversationProcessor, RenderToolCall } from '../operations/UserConversationProcessor';
@@ -33,7 +33,7 @@ import { WebSocketMessageData, WebSocketMessageType } from '../../api/websocketT
 import { InferenceContext, AgentActionKey } from '../inferutils/config.types';
 import { AGENT_CONFIG } from '../inferutils/config';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
-import { FileFetcher, fixProjectIssues } from '../../services/code-fixer';
+import { fixProjectIssues } from '../../services/code-fixer';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand } from '../utils/common';
 import { generateBlueprint } from '../planning/blueprint';
@@ -82,6 +82,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     protected deploymentManager!: DeploymentManager;
 
     private previewUrlCache: string = '';
+    private templateDetailsCache: TemplateDetails | null = null;
     
     // In-memory storage for user-uploaded images (not persisted in DO state)
     private pendingUserImages: ProcessedImageAttachment[] = []
@@ -121,7 +122,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     getAgentId() {
-        return this.state.inferenceContext.agentId
+        return this.state.inferenceContext.agentId;
     }
 
     initialState: CodeGenState = {
@@ -131,7 +132,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         generatedFilesMap: {},
         agentMode: 'deterministic',
         sandboxInstanceId: undefined,
-        templateDetails: {} as TemplateDetails,
+        templateName: '',
         commandsHistory: [],
         lastPackageJson: '',
         pendingUserInputs: [],
@@ -160,7 +161,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         );
         
         // Initialize FileManager
-        this.fileManager = new FileManager(this.stateManager);
+        this.fileManager = new FileManager(this.stateManager, () => this.getTemplateDetails());
         
         // Initialize DeploymentManager first (manages sandbox client caching)
         // DeploymentManager will use its own getClient() override for caching
@@ -185,7 +186,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         ..._args: unknown[]
     ): Promise<CodeGenState> {
 
-        const { query, language, frameworks, hostname, inferenceContext, templateInfo, sandboxSessionId } = initArgs;
+        const { query, language, frameworks, hostname, inferenceContext, templateInfo } = initArgs;
+        const sandboxSessionId = inferenceContext.agentId; // Let the initial sessionId be the agentId
         this.initLogger(inferenceContext.agentId, sandboxSessionId, inferenceContext.userId);
         
         // Generate a blueprint
@@ -211,12 +213,14 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         })
 
         const packageJson = templateInfo.templateDetails?.allFiles['package.json'];
+
+        this.templateDetailsCache = templateInfo.templateDetails;
         
         this.setState({
             ...this.initialState,
             query,
             blueprint,
-            templateDetails: templateInfo.templateDetails,
+            templateName: templateInfo.templateDetails.name,
             sandboxInstanceId: undefined,
             generatedPhases: [],
             commandsHistory: [],
@@ -252,7 +256,59 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     async isInitialized() {
         return this.getAgentId() ? true : false
-    }  
+    }
+
+    async onStart(_props?: Record<string, unknown> | undefined): Promise<void> {
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`);
+        // Ignore if agent not initialized
+        if (!this.state.templateName?.trim()) {
+            this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
+            return;
+        }
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart being processed, template name: ${this.state.templateName}`);
+        // Fill the template cache
+        await this.ensureTemplateDetails();
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart processed successfully`);
+    }
+    
+    onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {}
+
+    setState(state: CodeGenState): void {
+        try {
+            super.setState(state);
+        } catch (error) {
+            this.broadcastError("Error setting state", error);
+            this.logger().error("State details:", {
+                originalState: JSON.stringify(this.state, null, 2),
+                newState: JSON.stringify(state, null, 2)
+            });
+        }
+    }
+
+    onConnect(connection: Connection, ctx: ConnectionContext) {
+        this.logger().info(`Agent connected for agent ${this.getAgentId()}`, { connection, ctx });
+        sendToConnection(connection, 'agent_connected', {
+            state: this.state,
+            templateDetails: this.getTemplateDetails()
+        });
+    }
+
+    async ensureTemplateDetails() {
+        if (!this.templateDetailsCache) {
+            this.logger().info(`Template details being cached for template: ${this.state.templateName}`);
+            const results = await BaseSandboxService.getTemplateDetails(this.state.templateName);
+            if (!results.success || !results.templateDetails) {
+                throw new Error(`Failed to get template details for template: ${this.state.templateName}`);
+            }
+            this.templateDetailsCache = results.templateDetails;
+            this.logger().info(`Template details for template: ${this.state.templateName} cached successfully`);
+        }
+        return this.templateDetailsCache;
+    }
+
+    private getTemplateDetails() {
+        return this.templateDetailsCache!;
+    }
 
     /*
     * Each DO has 10 gb of sqlite storage. However, the way agents sdk works, it stores the 'state' object of the agent as a single row
@@ -332,20 +388,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
         this.logger().info(`Agent initialized successfully for agent ${this.state.inferenceContext.agentId}`);
     }
-    
-    onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {}
-
-    setState(state: CodeGenState): void {
-        try {
-            super.setState(state);
-        } catch (error) {
-            this.broadcastError("Error setting state", error);
-            this.logger().error("State details:", {
-                originalState: JSON.stringify(this.state, null, 2),
-                newState: JSON.stringify(state, null, 2)
-            });
-        }
-    }
 
     getPreviewUrlCache() {
         return this.previewUrlCache;
@@ -358,7 +400,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 agentId: this.getAgentId(),
                 query: this.state.query,
                 blueprint: this.state.blueprint,
-                template: this.state.templateDetails,
+                template: this.getTemplateDetails(),
                 inferenceContext: this.state.inferenceContext
             });
         }
@@ -403,7 +445,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return {
             env: this.env,
             agentId: this.getAgentId(),
-            context: GenerationContext.from(this.state, this.logger()),
+            context: GenerationContext.from(this.state, this.getTemplateDetails(), this.logger()),
             logger: this.logger(),
             inferenceContext: this.getInferenceContext(),
             agent: this.codingAgent
@@ -1352,7 +1394,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 return;
             }
             const issues = staticAnalysis.typecheck.issues.concat(staticAnalysis.lint.issues);
-            const allFiles = this.fileManager.getAllFiles();
+            const allFiles = this.fileManager.getAllRelevantFiles();
 
             const fastCodeFixer = await this.operations.fastCodeFixer.execute({
                 query: this.state.query,
@@ -1392,35 +1434,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info(`Attempting to fix ${typeCheckIssues.length} TypeScript issues using deterministic code fixer`);
             const allFiles = this.fileManager.getAllFiles();
 
-            // Create file fetcher callback
-            const fileFetcher: FileFetcher = async (filePath: string) => {
-                // Fetch a single file from the instance
-                try {
-                    const result = await this.getSandboxServiceClient().getFiles(this.state.sandboxInstanceId!, [filePath]);
-                    if (result.success && result.files.length > 0) {
-                        this.logger().info(`Successfully fetched file: ${filePath}`);
-                        return {
-                            filePath: filePath,
-                            fileContents: result.files[0].fileContents,
-                            filePurpose: `Fetched file: ${filePath}`
-                        };
-                    } else {
-                        this.logger().debug(`File not found: ${filePath}`);
-                    }
-                } catch (error) {
-                    this.logger().debug(`Failed to fetch file ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-                return null;
-            };
-            
-            const fixResult = await fixProjectIssues(
+            const fixResult = fixProjectIssues(
                 allFiles.map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents,
                     filePurpose: ''
                 })),
-                typeCheckIssues,
-                fileFetcher
+                typeCheckIssues
             );
 
             this.broadcast(WebSocketMessageResponses.DETERMINISTIC_CODE_FIX_COMPLETED, {

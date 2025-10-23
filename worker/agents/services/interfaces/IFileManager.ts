@@ -12,7 +12,12 @@ export interface IFileManager {
     getGeneratedFile(path: string): FileOutputType | null;
 
     /**
-     * Get all files (template + generated)
+     * Get all relevant files (template (important) + generated)
+     */
+    getAllRelevantFiles(): FileOutputType[];
+
+    /**
+     * Get all files (template (important) + generated)
      */
     getAllFiles(): FileOutputType[];
 

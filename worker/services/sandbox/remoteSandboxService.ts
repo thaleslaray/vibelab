@@ -1,5 +1,4 @@
 import {
-    TemplateDetailsResponse,
     BootstrapResponse,
     GetInstanceResponse,
     BootstrapStatusResponse,
@@ -14,7 +13,6 @@ import {
     DeploymentResult,
     GetLogsResponse,
     ListInstancesResponse,
-    TemplateDetailsResponseSchema,
     BootstrapResponseSchema,
     BootstrapRequest,
     GetInstanceResponseSchema,
@@ -114,12 +112,6 @@ export class RemoteSandboxServiceClient extends BaseSandboxService{
                 error: "Failed to validate response"
             };
         }
-    }
-    /**
-     * Get details for a specific template.
-     */
-    async getTemplateDetails(templateName: string): Promise<TemplateDetailsResponse> {
-        return this.makeRequest(`/templates/${templateName}`, 'GET', TemplateDetailsResponseSchema);
     }
 
     /**

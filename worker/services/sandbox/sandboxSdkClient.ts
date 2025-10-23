@@ -1,7 +1,6 @@
 import { getSandbox, Sandbox, parseSSEStream, LogEvent, ExecResult } from '@cloudflare/sandbox';
 
 import {
-    TemplateDetailsResponse,
     BootstrapResponse,
     GetInstanceResponse,
     BootstrapStatusResponse,
@@ -24,8 +23,6 @@ import {
     GetLogsResponse,
     ListInstancesResponse,
     StoredError,
-    TemplateInfo,
-    TemplateDetails,
 } from './sandboxTypes';
 
 import { createObjectLogger } from '../../logger';
@@ -40,7 +37,7 @@ import {
 import { 
     createAssetManifest 
 } from '../deployer/utils/index';
-import { CodeFixResult, FileFetcher, fixProjectIssues } from '../code-fixer';
+import { CodeFixResult, fixProjectIssues } from '../code-fixer';
 import { FileObject } from '../code-fixer/types';
 import { generateId } from '../../utils/idGenerator';
 import { ResourceProvisioner } from './resourceProvisioner';
@@ -391,96 +388,6 @@ export class SandboxSdkClient extends BaseSandboxService {
             }
         } else {
             this.logger.info(`Template already exists`);
-        }
-    }
-
-
-    async getTemplateDetails(templateName: string): Promise<TemplateDetailsResponse> {
-        try {
-            this.logger.info('Retrieving template details', { templateName });
-
-            await this.ensureTemplateExists(templateName);
-
-            this.logger.info('Template setup complete');
-
-            const [fileTree, catalogInfo, dontTouchFiles, redactedFiles] = await Promise.all([
-                this.buildFileTree(templateName),
-                this.getTemplateFromCatalog(templateName),
-                this.fetchDontTouchFiles(templateName),
-                this.fetchRedactedFiles(templateName)
-            ]);
-
-            if (!fileTree) {
-                throw new Error(`Failed to build file tree for template ${templateName}`);
-            }
-
-            const filesResponse = await this.getFiles(templateName, undefined, true, redactedFiles);    // Use template name as directory
-
-            this.logger.info('Template files retrieved');
-
-            // Parse package.json for dependencies
-            let dependencies: Record<string, string> = {};
-            try {
-                const packageJsonFile = filesResponse.files.find(file => file.filePath === 'package.json');
-                if (!packageJsonFile) {
-                    throw new Error('package.json not found');
-                }
-                const packageJson = JSON.parse(packageJsonFile.fileContents) as {
-                    dependencies?: Record<string, string>;
-                    devDependencies?: Record<string, string>;
-                };
-                dependencies = { 
-                    ...packageJson.dependencies || {}, 
-                    ...packageJson.devDependencies || {}
-                };
-            } catch {
-                this.logger.info('No package.json found', { templateName });
-            }
-
-            const allFiles = filesResponse.files.reduce((acc, file) => {
-                acc[file.filePath] = file.fileContents;
-                return acc;
-            }, {} as Record<string, string>);
-            const templateDetails: TemplateDetails = {
-                name: templateName,
-                description: {
-                    selection: catalogInfo?.description.selection || '',
-                    usage: catalogInfo?.description.usage || ''
-                },
-                fileTree,
-                allFiles,
-                importantFiles: filesResponse.files.map(file => file.filePath),
-                language: catalogInfo?.language,
-                deps: dependencies,
-                dontTouchFiles,
-                redactedFiles,
-                frameworks: catalogInfo?.frameworks || []
-            };
-
-            this.logger.info('Template files retrieved', { templateName, fileCount: filesResponse.files.length });
-
-            return {
-                success: true,
-                templateDetails
-            };
-        } catch (error) {
-            this.logger.error('getTemplateDetails', error, { templateName });
-            return {
-                success: false,
-                error: `Failed to get template details: ${error instanceof Error ? error.message : 'Unknown error'}`
-            };
-        }
-    }
-
-    private async getTemplateFromCatalog(templateName: string): Promise<TemplateInfo | null> {
-        try {
-            const templatesResponse = await SandboxSdkClient.listTemplates();
-            if (templatesResponse.success) {
-                return templatesResponse.templates.find(t => t.name === templateName) || null;
-            }
-            return null;
-        } catch {
-            return null;
         }
     }
     
@@ -1809,35 +1716,14 @@ export class SandboxSdkClient extends BaseSandboxService {
             
             // Create file fetcher callback
             const session = await this.getInstanceSession(instanceId);
-            const fileFetcher: FileFetcher = async (filePath: string) => {
-                // Fetch a single file from the instance
-                try {
-                    const result = await session.readFile(`/workspace/${instanceId}/${filePath}`);  
-                    if (result.success) {
-                        this.logger.info(`Successfully fetched file: ${filePath}`);
-                        return {
-                            filePath: filePath,
-                            fileContents: result.content,
-                            filePurpose: `Fetched file: ${filePath}`
-                        };
-                    } else {
-                        this.logger.debug(`File not found: ${filePath}`);
-                    }
-                } catch (error) {
-                    this.logger.debug(`Failed to fetch file ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-                return null;
-            };
-
             // Use the new functional API
-            const fixResult = await fixProjectIssues(
+            const fixResult = fixProjectIssues(
                 files.map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents,
                     filePurpose: ''
                 })),
                 analysisResult.typecheck.issues,
-                fileFetcher
             );
             for (const file of fixResult.modifiedFiles) {
                 await session.writeFile(`/workspace/${instanceId}/${file.filePath}`, file.fileContents);

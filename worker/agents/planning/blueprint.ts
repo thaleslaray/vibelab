@@ -9,7 +9,7 @@ import { TemplateRegistry } from '../inferutils/schemaFormatters';
 import z from 'zod';
 import { imagesToBase64 } from 'worker/utils/images';
 import { ProcessedImageAttachment } from 'worker/types/image-attachment';
-import { getTemplateFiles } from 'worker/services/sandbox/utils';
+import { getTemplateImportantFiles } from 'worker/services/sandbox/utils';
 
 const logger = createLogger('Blueprint');
 
@@ -188,7 +188,7 @@ export async function generateBlueprint({ env, inferenceContext, query, language
         // ---------------------------------------------------------------------------
 
         const filesText = TemplateRegistry.markdown.serialize(
-            { files: getTemplateFiles(templateDetails).filter(f => !f.filePath.includes('package.json')) },
+            { files: getTemplateImportantFiles(templateDetails).filter(f => !f.filePath.includes('package.json')) },
             z.object({ files: z.array(TemplateFileSchema) })
         );
 

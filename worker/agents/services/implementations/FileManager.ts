@@ -2,9 +2,9 @@ import * as Diff from 'diff';
 import { IFileManager } from '../interfaces/IFileManager';
 import { IStateManager } from '../interfaces/IStateManager';
 import { FileOutputType } from '../../schemas';
-// import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 import { FileProcessing } from '../../domain/pure/FileProcessing';
 import { FileState } from 'worker/agents/core/state';
+import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 
 /**
  * Manages file operations for code generation
@@ -12,7 +12,8 @@ import { FileState } from 'worker/agents/core/state';
  */
 export class FileManager implements IFileManager {
     constructor(
-        private stateManager: IStateManager
+        private stateManager: IStateManager,
+        private getTemplateDetailsFunc: () => TemplateDetails
     ) {}
 
     getGeneratedFile(path: string): FileOutputType | null {
@@ -20,9 +21,19 @@ export class FileManager implements IFileManager {
         return state.generatedFilesMap[path] || null;
     }
 
+    /**
+     * Get all files combining template and generated files
+     * Template files are overridden by generated files with same path
+     * @returns Array of all files. Only returns important template files, not all!
+     */
+    getAllRelevantFiles(): FileOutputType[] {
+        const state = this.stateManager.getState();
+        return FileProcessing.getAllRelevantFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
+    }
+
     getAllFiles(): FileOutputType[] {
         const state = this.stateManager.getState();
-        return FileProcessing.getAllFiles(state.templateDetails, state.generatedFilesMap);
+        return FileProcessing.getAllFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
     }
 
     saveGeneratedFile(file: FileOutputType): FileState {
@@ -86,6 +97,7 @@ export class FileManager implements IFileManager {
             generatedFilesMap: newFilesMap
         });
     }
+
     fileExists(path: string): boolean {
         return !!this.getGeneratedFile(path)
     }
@@ -103,5 +115,28 @@ export class FileManager implements IFileManager {
     getGeneratedFiles(): FileOutputType[] {
         const state = this.stateManager.getState();
         return Object.values(state.generatedFilesMap);
+    }
+
+    getTemplateFile(filePath: string) : FileOutputType | null {
+        const templateDetails = this.getTemplateDetailsFunc();
+        const fileContents = templateDetails.allFiles[filePath];
+        if (!fileContents) {
+            return null;
+        }
+        return {
+            filePath,
+            fileContents,
+            filePurpose: 'Bootstrapped template file',
+        }
+    }
+
+    getFile(filePath: string) : FileOutputType | null {
+        // First search generated files
+        const generatedFile = this.getGeneratedFile(filePath);
+        if (generatedFile) {
+            return generatedFile;
+        }
+        // Then search template files
+        return this.getTemplateFile(filePath);
     }
 }

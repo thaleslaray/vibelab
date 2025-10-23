@@ -1,10 +1,14 @@
 import { CodeGenState, FileState } from './state';
 import { StructuredLogger } from '../../logger';
+import { TemplateDetails } from 'worker/services/sandbox/sandboxTypes';
 
 export class StateMigration {
     static migrateIfNeeded(state: CodeGenState, logger: StructuredLogger): CodeGenState | null {
         let needsMigration = false;
         
+        //------------------------------------------------------------------------------------
+        // Migrate files from old schema
+        //------------------------------------------------------------------------------------
         const migrateFile = (file: any): any => {
             const hasOldFormat = 'file_path' in file || 'file_contents' in file || 'file_purpose' in file;
             
@@ -34,27 +38,9 @@ export class StateMigration {
             }
         }
 
-        let migratedTemplateDetails = state.templateDetails;
-        if ('files' in migratedTemplateDetails && migratedTemplateDetails?.files) {
-            const migratedTemplateFiles = (migratedTemplateDetails.files as Array<any>).map(file => {
-                const migratedFile = migrateFile(file);
-                return migratedFile;
-            });
-
-            const allFiles = migratedTemplateFiles.reduce((acc, file) => {
-                acc[file.filePath] = file;
-                return acc;
-            }, {} as Record<string, any>);
-
-            migratedTemplateDetails = {
-                ...migratedTemplateDetails,
-                allFiles
-            };
-
-            // Remove 'files' property
-            delete (migratedTemplateDetails as any).files;
-            needsMigration = true;
-        }
+        //------------------------------------------------------------------------------------
+        // Migrate conversations cleanups and internal memos
+        //------------------------------------------------------------------------------------
 
         let migratedConversationMessages = state.conversationMessages;
         const MIN_MESSAGES_FOR_CLEANUP = 25;
@@ -132,6 +118,9 @@ export class StateMigration {
             }
         }
 
+        //------------------------------------------------------------------------------------
+        // Migrate inference context from old schema
+        //------------------------------------------------------------------------------------
         let migratedInferenceContext = state.inferenceContext;
         if (migratedInferenceContext && 'userApiKeys' in migratedInferenceContext) {
             migratedInferenceContext = {
@@ -142,6 +131,9 @@ export class StateMigration {
             needsMigration = true;
         }
 
+        //------------------------------------------------------------------------------------
+        // Migrate deprecated props
+        //------------------------------------------------------------------------------------  
         const stateHasDeprecatedProps = 'latestScreenshot' in (state as any);
         if (stateHasDeprecatedProps) {
             needsMigration = true;
@@ -151,11 +143,22 @@ export class StateMigration {
         if (!stateHasProjectUpdatesAccumulator) {
             needsMigration = true;
         }
+
+        //------------------------------------------------------------------------------------
+        // Migrate Template Details -> remove template details and instead use template name
+        //------------------------------------------------------------------------------------
+        const hasTemplateDetails = 'templateDetails' in (state as any);
+        if (hasTemplateDetails) {
+            needsMigration = true;
+            const templateDetails = (state as any).templateDetails;
+            const templateName = (templateDetails as TemplateDetails).name;
+            delete (state as any).templateDetails;
+            (state as any).templateName = templateName;
+        }
         
         if (needsMigration) {
             logger.info('Migrating state: schema format, conversation cleanup, and security fixes', {
                 generatedFilesCount: Object.keys(migratedFilesMap).length,
-                templateFilesCount: migratedTemplateDetails?.allFiles?.length || 0,
                 finalConversationCount: migratedConversationMessages?.length || 0,
                 removedUserApiKeys: state.inferenceContext && 'userApiKeys' in state.inferenceContext
             });
@@ -163,7 +166,6 @@ export class StateMigration {
             const newState = {
                 ...state,
                 generatedFilesMap: migratedFilesMap,
-                templateDetails: migratedTemplateDetails,
                 conversationMessages: migratedConversationMessages,
                 inferenceContext: migratedInferenceContext,
                 projectUpdatesAccumulator: []

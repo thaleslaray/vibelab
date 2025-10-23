@@ -1,10 +1,10 @@
 import { TemplateDetails, TemplateFile } from "./sandboxTypes";
 
-export function getTemplateImportantFiles(templateDetails: TemplateDetails): TemplateFile[] {
+export function getTemplateImportantFiles(templateDetails: TemplateDetails, filterRedacted: boolean = true): TemplateFile[] {
     return templateDetails.importantFiles.map(filePath => ({
         filePath,
-        fileContents: templateDetails.allFiles[filePath],
-    }));
+        fileContents: filterRedacted && templateDetails.redactedFiles.includes(filePath) ? 'REDACTED' : templateDetails.allFiles[filePath]
+    })).filter(f => f.fileContents);
 }
 
 export function getTemplateFiles(templateDetails: TemplateDetails): TemplateFile[] {
