@@ -533,14 +533,17 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         // Add AI proxy vars if AI template
         let localEnvVars: Record<string, string> = {};
         if (state.templateName?.includes('agents')) {
-            localEnvVars = {
-                "CF_AI_BASE_URL": generateAppProxyUrl(this.env),
-                "CF_AI_API_KEY": await generateAppProxyToken(
-                    state.inferenceContext.agentId,
-                    state.inferenceContext.userId,
-                    this.env
-                )
-            };
+            const secret = this.env.AI_PROXY_JWT_SECRET;
+            if (typeof secret === 'string' && secret.trim().length > 0) {
+                localEnvVars = {
+                    "CF_AI_BASE_URL": generateAppProxyUrl(this.env),
+                    "CF_AI_API_KEY": await generateAppProxyToken(
+                        state.inferenceContext.agentId,
+                        state.inferenceContext.userId,
+                        this.env
+                    )
+                };
+            }
         }
         
         // Create instance
