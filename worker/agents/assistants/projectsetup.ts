@@ -127,7 +127,7 @@ ${error}`);
                 context: this.inferenceContext,
                 modelName: error? AIModels.GEMINI_2_5_FLASH : undefined,
             });
-            this.logger.info(`Generated setup commands: ${results}`);
+            this.logger.info(`Generated setup commands: ${results.string}`);
 
             this.save([createAssistantMessage(results.string)]);
             return { commands: extractCommands(results.string) };

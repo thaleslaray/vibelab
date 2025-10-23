@@ -250,7 +250,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info("Initial commands executed successfully");
         } catch (error) {
             this.logger().error("Error during async initialization:", error);
-            throw error;
+            // throw error;
         }
     }
 
