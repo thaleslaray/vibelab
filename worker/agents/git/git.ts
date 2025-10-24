@@ -2,7 +2,7 @@
  * Git version control for Durable Objects using isomorphic-git
  */
 
-import git from 'isomorphic-git/index.js';
+import git from 'isomorphic-git';
 import { SqliteFS, type SqlExecutor } from './fs-adapter';
 import { FileOutputType } from '../schemas';
 
