@@ -8,15 +8,15 @@ import {
 import { BootstrapResponse, GitHubPushRequest, StaticAnalysisResponse, RuntimeError, PreviewType } from '../../../services/sandbox/sandboxTypes';
 import { GitHubExportResult } from '../../../services/github/types';
 import { FileOutputType } from '../../schemas';
-import { generateId } from '../../../utils/idGenerator';
+import { generateId, generateNanoId } from '../../../utils/idGenerator';
 import { generateAppProxyToken, generateAppProxyUrl } from '../../../services/aigateway-proxy/controller';
 import { BaseAgentService } from './BaseAgentService';
 import { ServiceOptions } from '../interfaces/IServiceOptions';
 import { BaseSandboxService } from '../../../services/sandbox/BaseSandboxService';
 import { getSandboxService } from '../../../services/sandbox/factory';
 
-const MAX_DEPLOYMENT_RETRIES = 3;
-const DEPLOYMENT_TIMEOUT_MS = 60000;
+const PER_ATTEMPT_TIMEOUT_MS = 60000;  // 60 seconds per individual attempt
+const MASTER_DEPLOYMENT_TIMEOUT_MS = 300000;  // 5 minutes total
 const HEALTH_CHECK_INTERVAL_MS = 30000;
 
 /**
@@ -94,7 +94,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
     }
 
     private generateNewSessionId(): string {
-        return generateId();
+        return generateNanoId();
     }
 
     /**
@@ -260,6 +260,8 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
     /**
      * Main deployment method
      * Callbacks allow agent to broadcast at the right times
+     * All concurrent callers share the same promise and wait together
+     * Retries indefinitely until success or master timeout (5 minutes)
      */
     async deployToSandbox(
         files: FileOutputType[] = [],
@@ -270,18 +272,14 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
     ): Promise<PreviewType | null> {
         const logger = this.getLog();
         
-        // Queue management - prevent concurrent deployments
+        // All concurrent callers wait on the same promise
         if (this.currentDeploymentPromise) {
             logger.info('Deployment already in progress, waiting for completion');
-            try {
-                const result = await this.currentDeploymentPromise;
-                if (result) {
-                    logger.info('Previous deployment completed successfully, returning its result');
-                    return result;
-                }
-            } catch (error) {
-                logger.warn('Previous deployment failed, proceeding with new deployment:', error);
-            }
+            return await this.withTimeout(
+                this.currentDeploymentPromise,
+                MASTER_DEPLOYMENT_TIMEOUT_MS,
+                'Deployment failed after 5 minutes'
+            ).catch(() => null);  // Convert timeout to null like first caller
         }
 
         logger.info("Deploying to sandbox", { files: files.length, redeploy, commitMessage, sessionId: this.getSessionId() });
@@ -292,129 +290,126 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
             redeploy,
             commitMessage,
             clearLogs,
-            MAX_DEPLOYMENT_RETRIES,
             callbacks
         );
 
         try {
-            // Wrap with timeout
+            // Master timeout: 5 minutes total
+            // This doesn't break the underlying operation - it just stops waiting
             const result = await this.withTimeout(
                 this.currentDeploymentPromise,
-                DEPLOYMENT_TIMEOUT_MS,
-                'Deployment timed out',
-                () => {
-                    logger.warn('Deployment timed out, resetting sessionId to provision new sandbox instance');
-                    this.resetSessionId();
-                }
+                MASTER_DEPLOYMENT_TIMEOUT_MS,
+                'Deployment failed after 5 minutes of retries'
+                // No onTimeout callback - don't break the operation
             );
             return result;
+        } catch (error) {
+            // Master timeout reached - all retries exhausted
+            logger.error('Deployment permanently failed after master timeout:', error);
+            return null;
         } finally {
             this.currentDeploymentPromise = null;
         }
     }
 
     /**
-     * Execute deployment with retry logic
-     * Handles error-specific sessionId reset and exponential backoff
+     * Execute deployment with infinite retry until success
+     * Each attempt has its own timeout
+     * Resets sessionId after consecutive failures
      */
     private async executeDeploymentWithRetry(
         files: FileOutputType[],
         redeploy: boolean,
         commitMessage: string | undefined,
         clearLogs: boolean,
-        retries: number,
         callbacks?: SandboxDeploymentCallbacks
-    ): Promise<PreviewType | null> {
+    ): Promise<PreviewType> {
         const logger = this.getLog();
+        let attempt = 0;
+        const maxAttemptsBeforeSessionReset = 3;
+        
+        while (true) {
+            attempt++;
+            logger.info(`Deployment attempt ${attempt}`, { sessionId: this.getSessionId() });
+            
+            try {
+                // Callback: deployment starting (only on first attempt)
+                callbacks?.onStarted?.({
+                    message: "Deploying code to sandbox service",
+                    files: files.map(f => ({ filePath: f.filePath }))
+                });
 
-        try {
-            // Callback: deployment actually starting now
-            callbacks?.onStarted?.({
-                message: "Deploying code to sandbox service",
-                files: files.map(f => ({ filePath: f.filePath }))
-            });
-
-            logger.info('Deploying code to sandbox service');
-
-            // Core deployment
-            const result = await this.deploy({
-                files,
-                redeploy,
-                commitMessage,
-                clearLogs
-            });
-
-            // Start health check after successful deployment
-            if (result.redeployed || this.healthCheckInterval === null) {
-                this.startHealthCheckInterval(result.sandboxInstanceId);
-            }
-
-            const preview = {
-                runId: result.sandboxInstanceId,
-                previewURL: result.previewURL,
-                tunnelURL: result.tunnelURL
-            };
-
-            // Callback: deployment completed
-            callbacks?.onCompleted?.({
-                message: "Deployment completed",
-                instanceId: preview.runId,
-                previewURL: preview.previewURL ?? '',
-                tunnelURL: preview.tunnelURL ?? ''
-            });
-
-            return preview;
-        } catch (error) {
-            logger.error("Error deploying to sandbox service:", error, { 
-                sessionId: this.getSessionId(), 
-                sandboxInstanceId: this.getState().sandboxInstanceId 
-            });
-
-            const errorMsg = error instanceof Error ? error.message : String(error);
-
-            // Handle specific errors that require session reset
-            if (errorMsg.includes('Network connection lost') || 
-                errorMsg.includes('Container service disconnected') || 
-                errorMsg.includes('Internal error in Durable Object storage')) {
-                logger.warn('Session-level error detected, resetting sessionId');
-                this.resetSessionId();
-            }
-
-            // Clear instance ID from state
-            const state = this.getState();
-            this.setState({
-                ...state,
-                sandboxInstanceId: undefined
-            });
-
-            // Retry logic with exponential backoff
-            if (retries > 0) {
-                logger.info(`Retrying deployment, ${retries} attempts remaining`);
-                
-                // Exponential backoff
-                const attempt = MAX_DEPLOYMENT_RETRIES - retries + 1;
-                const delayMs = Math.pow(2, attempt - 1) * 1000;
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-
-                return this.executeDeploymentWithRetry(
+                // Core deployment with per-attempt timeout
+                const deployPromise = this.deploy({
                     files,
                     redeploy,
                     commitMessage,
-                    clearLogs,
-                    retries - 1,
-                    callbacks
+                    clearLogs
+                });
+                
+                const result = await this.withTimeout(
+                    deployPromise,
+                    PER_ATTEMPT_TIMEOUT_MS,
+                    `Deployment attempt ${attempt} timed out`
+                    // No onTimeout callback - don't break anything
                 );
-            }
 
-            // Callback: deployment failed after all retries
-            logger.error('Deployment failed after all retries');
-            callbacks?.onError?.({
-                error: `Error deploying to sandbox service: ${errorMsg}. Please report an issue if this persists`
-            });
-            
-            return null;
+                // Success! Start health check and return
+                if (result.redeployed || this.healthCheckInterval === null) {
+                    this.startHealthCheckInterval(result.sandboxInstanceId);
+                }
+
+                const preview = {
+                    runId: result.sandboxInstanceId,
+                    previewURL: result.previewURL,
+                    tunnelURL: result.tunnelURL
+                };
+
+                callbacks?.onCompleted?.({
+                    message: "Deployment completed",
+                    instanceId: preview.runId,
+                    previewURL: preview.previewURL ?? '',
+                    tunnelURL: preview.tunnelURL ?? ''
+                });
+
+                logger.info('Deployment succeeded', { attempt, sessionId: this.getSessionId() });
+                return preview;
+                
+            } catch (error) {
+                logger.warn(`Deployment attempt ${attempt} failed:`, error);
+                
+                const errorMsg = error instanceof Error ? error.message : String(error);
+
+                // Handle specific errors that require session reset
+                if (errorMsg.includes('Network connection lost') || 
+                    errorMsg.includes('Container service disconnected') || 
+                    errorMsg.includes('Internal error in Durable Object storage')) {
+                    logger.warn('Session-level error detected, resetting sessionId');
+                    this.resetSessionId();
+                }
+                
+                // After consecutive failures, reset session to get fresh sandbox
+                if (attempt % maxAttemptsBeforeSessionReset === 0) {
+                    logger.warn(`${attempt} consecutive failures, resetting sessionId for fresh sandbox`);
+                    this.resetSessionId();
+                }
+                
+                // Clear instance ID from state
+                this.setState({
+                    ...this.getState(),
+                    sandboxInstanceId: undefined
+                });
+                
+                // Exponential backoff before retry (capped at 30 seconds)
+                const backoffMs = Math.min(1000 * Math.pow(2, Math.min(attempt - 1, 5)), 30000);
+                logger.info(`Retrying deployment in ${backoffMs}ms...`);
+                await new Promise(resolve => setTimeout(resolve, backoffMs));
+                
+                // Loop continues - retry indefinitely until master timeout
+            }
         }
     }
+
 
     /**
      * Deploy files to sandbox instance (core deployment)
@@ -499,7 +494,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
 
         // Update state with new instance ID
         this.setState({
-            ...state,
+            ...this.getState(),
             sandboxInstanceId: results.runId,
         });
 
