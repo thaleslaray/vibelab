@@ -48,6 +48,7 @@ import { ConversationMessage, ConversationState } from '../inferutils/common';
 import { DeepCodeDebugger } from '../assistants/codeDebugger';
 import { DeepDebugResult } from './types';
 import { StateMigration } from './stateMigration';
+import { GitVersionControl } from '../git';
 
 interface Operations {
     codeReview: CodeReviewOperation;
@@ -80,6 +81,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     protected codingAgent: CodingAgentInterface = new CodingAgentInterface(this);
     
     protected deploymentManager!: DeploymentManager;
+    protected git: GitVersionControl;
 
     private previewUrlCache: string = '';
     private templateDetailsCache: TemplateDetails | null = null;
@@ -159,9 +161,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             () => this.state,
             (s) => this.setState(s)
         );
-        
+
+        // Initialize GitVersionControl
+        this.git = new GitVersionControl(this.sql);
+
         // Initialize FileManager
-        this.fileManager = new FileManager(this.stateManager, () => this.getTemplateDetails());
+        this.fileManager = new FileManager(this.stateManager, () => this.getTemplateDetails(), this.git);
         
         // Initialize DeploymentManager first (manages sandbox client caching)
         // DeploymentManager will use its own getClient() override for caching
@@ -260,6 +265,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     async onStart(_props?: Record<string, unknown> | undefined): Promise<void> {
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`);
+        await this.git.init();
         // Ignore if agent not initialized
         if (!this.state.templateName?.trim()) {
             this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
@@ -554,7 +560,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
         const readme = await this.operations.implementPhase.generateReadme(this.getOperationOptions());
 
-        this.fileManager.saveGeneratedFile(readme);
+        this.fileManager.saveGeneratedFile(readme, "feat: README.md");
 
         this.broadcast(WebSocketMessageResponses.FILE_GENERATED, {
             message: 'README.md generated successfully',
@@ -1138,7 +1144,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
     
         // Update state with completed phase
-        this.fileManager.saveGeneratedFiles(finalFiles);
+        this.fileManager.saveGeneratedFiles(finalFiles, `feat: ${phase.name}`);
 
         this.logger().info("Files generated for phase:", phase.name, finalFiles.map(f => f.filePath));
 
@@ -1303,7 +1309,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.getOperationOptions()
         );
 
-        const fileState = this.fileManager.saveGeneratedFile(result);
+        const fileState = this.fileManager.saveGeneratedFile(result, `fix: ${file.filePath}`);
 
         this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
             message: `Regenerated file: ${file.filePath}`,
@@ -1414,7 +1420,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }, this.getOperationOptions());
 
             if (fastCodeFixer.length > 0) {
-                this.fileManager.saveGeneratedFiles(fastCodeFixer);
+                this.fileManager.saveGeneratedFiles(fastCodeFixer, "fix: Fast smart code fixes");
                 await this.deployToSandbox(fastCodeFixer);
                 this.logger().info("Fast smart code fixes applied successfully");
             }
@@ -1486,7 +1492,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                             filePurpose: allFiles.find(f => f.filePath === file.filePath)?.filePurpose || '',
                             fileContents: file.fileContents
                     }));
-                    this.fileManager.saveGeneratedFiles(fixedFiles);
+                    this.fileManager.saveGeneratedFiles(fixedFiles, "fix: applied deterministic fixes");
                     
                     await this.deployToSandbox(fixedFiles, false, "fix: applied deterministic fixes");
                     this.logger().info("Deployed deterministic fixes to sandbox");
@@ -2017,7 +2023,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     '[cloudflarebutton]', 
                     prepareCloudflareButton(options.repositoryHtmlUrl, 'markdown')
                 );
-                this.fileManager.saveGeneratedFile(readmeFile);
+                this.fileManager.saveGeneratedFile(readmeFile, "feat: README updated with Cloudflare deploy button");
                 this.logger().info('README prepared with Cloudflare deploy button');
                 
                 // Deploy updated README to sandbox so it's visible in preview
