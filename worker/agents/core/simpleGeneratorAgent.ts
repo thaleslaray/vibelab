@@ -34,6 +34,7 @@ import { InferenceContext, AgentActionKey } from '../inferutils/config.types';
 import { AGENT_CONFIG } from '../inferutils/config';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
 import { fixProjectIssues } from '../../services/code-fixer';
+import { GitVersionControl, GitCloneService } from '../git';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand } from '../utils/common';
 import { generateBlueprint } from '../planning/blueprint';
@@ -48,7 +49,6 @@ import { ConversationMessage, ConversationState } from '../inferutils/common';
 import { DeepCodeDebugger } from '../assistants/codeDebugger';
 import { DeepDebugResult } from './types';
 import { StateMigration } from './stateMigration';
-import { GitVersionControl } from '../git';
 
 interface Operations {
     codeReview: CodeReviewOperation;
@@ -2339,5 +2339,33 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             
             throw new Error(`Screenshot capture failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
+    }
+
+    /**
+     * Handle git info/refs request for cloning
+     * Returns git protocol advertisement
+     */
+    async handleGitInfoRefs(): Promise<string> {
+        const fs = await GitCloneService.buildRepository({
+            agentGitFS: this.git.fs,
+            templateDetails: this.templateDetailsCache,
+            appQuery: this.state.query
+        });
+        
+        return await GitCloneService.handleInfoRefs(fs);
+    }
+
+    /**
+     * Handle git upload-pack request for cloning
+     * Returns packfile for git clone
+     */
+    async handleGitUploadPack(): Promise<Uint8Array> {
+        const fs = await GitCloneService.buildRepository({
+            agentGitFS: this.git.fs,
+            templateDetails: this.templateDetailsCache,
+            appQuery: this.state.query
+        });
+        
+        return await GitCloneService.handleUploadPack(fs);
     }
 }

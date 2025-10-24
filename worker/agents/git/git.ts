@@ -16,7 +16,7 @@ export interface CommitInfo {
 type FileSnapshot = Omit<FileOutputType, 'filePurpose'>;
 
 export class GitVersionControl {
-    private fs: SqliteFS;
+    public fs: SqliteFS;
     private author: { name: string; email: string };
 
     constructor(sql: SqlExecutor, author?: { name: string; email: string }) {
