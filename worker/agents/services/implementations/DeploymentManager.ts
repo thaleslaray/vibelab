@@ -8,7 +8,7 @@ import {
 import { BootstrapResponse, GitHubPushRequest, StaticAnalysisResponse, RuntimeError, PreviewType } from '../../../services/sandbox/sandboxTypes';
 import { GitHubExportResult } from '../../../services/github/types';
 import { FileOutputType } from '../../schemas';
-import { generateId, generateNanoId } from '../../../utils/idGenerator';
+import { generateId } from '../../../utils/idGenerator';
 import { generateAppProxyToken, generateAppProxyUrl } from '../../../services/aigateway-proxy/controller';
 import { BaseAgentService } from './BaseAgentService';
 import { ServiceOptions } from '../interfaces/IServiceOptions';
@@ -41,7 +41,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         if (!state.sessionId) {
             this.setState({
                 ...state,
-                sessionId: this.generateNewSessionId()
+                sessionId: DeploymentManager.generateNewSessionId()
             });
         }
     }
@@ -78,7 +78,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         const logger = this.getLog();
         const state = this.getState();
         const oldSessionId = state.sessionId;
-        const newSessionId = this.generateNewSessionId();
+        const newSessionId = DeploymentManager.generateNewSessionId();
         
         logger.info(`SessionId reset: ${oldSessionId} → ${newSessionId}`);
         
@@ -93,8 +93,8 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         });
     }
 
-    private generateNewSessionId(): string {
-        return generateNanoId();
+    static generateNewSessionId(): string {
+        return generateId();
     }
 
     /**
@@ -398,6 +398,10 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 this.setState({
                     ...this.getState(),
                     sandboxInstanceId: undefined
+                });
+
+                callbacks?.onError?.({
+                    error: `Deployment attempt ${attempt} failed: ${errorMsg}`
                 });
                 
                 // Exponential backoff before retry (capped at 30 seconds)
