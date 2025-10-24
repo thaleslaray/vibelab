@@ -4,6 +4,8 @@ Local first time setup guide for VibSDK - get your AI coding platform running lo
 
 **Make sure to read through the entire guide for important notes, and have all the required information ready before starting.**
 
+**Important Note: Cloudflare WARP has been known to cause issues with anonymous Cloudflared tunnels used in local development. It may cause previews to not load. If you experience issues with local development previews, try disabling WARP while working with VibSDK.**
+
 ## Prerequisites
 
 Before getting started, make sure you have:
