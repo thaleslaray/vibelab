@@ -202,6 +202,8 @@ bun run dev
 
 Visit your app at `http://localhost:5173`
 
+**Important Note**: If you didn't specifiy any oauth credentials during setup, You would need to register an account for the first time. 
+
 ## Troubleshooting
 
 ### Common Issues
