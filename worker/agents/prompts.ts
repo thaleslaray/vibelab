@@ -562,54 +562,57 @@ const value = useMemo(() => ({ user, setUser }), [user]);
 \`\`\`
 
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║  🚨 ZUSTAND STORE SELECTORS - #1 CRASH CAUSE - READ THIS 🚨                  ║
+║  🔥🔥🔥 ZUSTAND ABSOLUTE RULE - VIOLATION = INSTANT CRASH 🔥🔥🔥              ║
+║                                                                               ║
+║  ⚠️  ONLY RULE: Select individual primitives. NO EXCEPTIONS. ⚠️              ║
+║                                                                               ║
+║  ❌ BANNED FOREVER: useStore(s => ({ ... }))                                 ║
+║  ❌ BANNED FOREVER: useStore()  (no selector)                                ║
+║  ❌ BANNED FOREVER: useStore(s => s.getXxx())  (method calls)                ║
+║                                                                               ║
+║  ✅ ONLY ALLOWED: useStore(s => s.primitiveValue)                            ║
 ║                                                                               ║
 ║  Zustand is SUBSCRIPTION-BASED, not context-based like React Context.        ║
 ║  Object/array selectors create NEW references every render = CRASH           ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
-❌ FORBIDDEN PATTERNS (ALL CAUSE INFINITE LOOPS):
+❌ FORBIDDEN PATTERNS (THESE CAUSE INFINITE LOOPS):
 \`\`\`tsx
-// Pattern 1: Object literal selector (with or without useShallow)
+// 🔍 SCAN FOR: "useStore(s => ({" or "useStore((s) => ({"
 const { a, b, c } = useStore(s => ({ a: s.a, b: s.b, c: s.c })); // ❌ CRASH
 
-// Pattern 1b: useShallow DOES NOT FIX object literal selectors!
+// 🔍 SCAN FOR: "useStore(useShallow"
 import { useShallow } from 'zustand/react/shallow';
-const { a, b, c } = useStore(useShallow(s => ({ a: s.a, b: s.b, c: s.c }))); // ❌ STILL CRASHES!
+const { a, b, c } = useStore(useShallow(s => ({ a: s.a, b: s.b, c: s.c }))); // ❌ CRASH
 // Why? You're creating a NEW object ({ a, b, c }) every render in the selector
 // useShallow can't help - the object reference is new every time
 
-// Pattern 2: No selector (returns whole state object)
+// 🔍 SCAN FOR: "useStore()" or "= useStore();"
 const { a, b, c } = useStore(); // ❌ CRASH
 const state = useStore(); // ❌ CRASH
 
-// Pattern 3: Calling store methods (return new arrays/objects)
+// 🔍 SCAN FOR: "useStore(s => s.get" or "useStore((state) => state.get"
 const items = useStore(s => s.getItems()); // ❌ INFINITE LOOP
 const filtered = useStore(s => s.items.filter(...)); // ❌ INFINITE LOOP
 const mapped = useStore(s => s.data.map(...)); // ❌ INFINITE LOOP
 \`\`\`
 
 ⚠️ CRITICAL MISCONCEPTION - READ THIS:
-Many developers see "object literal selector without useShallow" and think "with useShallow" fixes it.
-NO! useShallow is ONLY for objects that ALREADY EXIST in your store, not for creating new objects.
+Many developers think useShallow fixes object-literal selectors. It does not.
+Avoid using useShallow in selectors entirely.
 
-✅ CORRECT PATTERNS (CHOOSE ONE):
+✅ CORRECT PATTERN - ONLY ONE OPTION:
 \`\`\`tsx
-// Option 1: Separate primitive selectors (RECOMMENDED - MOST EFFICIENT)
+// ONLY ALLOWED: Separate primitive selectors
 const a = useStore(s => s.a);
 const b = useStore(s => s.b);
 const c = useStore(s => s.c);
 // ⚡ EFFICIENCY: Each selector ONLY triggers re-render when ITS value changes
-// This is NOT inefficient! It's the BEST pattern for Zustand.
+// This is NOT inefficient! It's the BEST pattern for Zustand. This is actually good quality, elegant code!
+// THERE IS NO OPTION 2. Only individual primitive selectors are allowed.
+// If you need multiple values, call useStore multiple times - it's the ONLY correct pattern.
 
-// Option 2: useShallow for objects ALREADY IN the store (RARE - advanced)
-import { useShallow } from 'zustand/react/shallow';
-const viewport = useStore(useShallow(s => s.viewport)); 
-// ✅ ONLY when 'viewport' is an object that EXISTS in your store:
-// const store = create((set) => ({ viewport: { x: 0, y: 0 }, ... }))
-// ❌ NOT for creating new objects: useStore(useShallow(s => ({ x: s.x, y: s.y })))
-
-// Option 3: Store methods → Select primitives + useMemo in component
+// For derived/computed values: Select primitives + useMemo in component
 const items = useStore(s => s.items);
 const filter = useStore(s => s.filter);
 const filtered = useMemo(() => 
@@ -662,7 +665,7 @@ const { user, isLoading } = useStore(); // ❌ CRASH - NOT THE SAME!
 - "The result of getSnapshot should be cached"
 - "Too many re-renders"
 
-→ SCAN FOR: \`useStore(s => ({ ... }))\`, \`useStore(s => s.getXxx())\`, \`useStore()\`
+→ SCAN FOR: \`useStore(s => ({\`, \`useStore(s => s.get\`, \`useStore()\`
 → FIX: Select ONLY primitives, compute derived values with useMemo
 
 ╔═══════════════════════════════════════════════════════════════════════════════╗
@@ -708,8 +711,8 @@ const handleClick = useCallback(() => setCount(prev => prev + 1), []);
 ✅ **NEVER call methods in selectors** - \`useStore(s => s.getXxx())\` = CRASH
 ✅ **No selector = CRASH** - \`useStore()\` returns whole object = infinite loop
 ✅ **Lift state from recursion** - Never useState inside recursive components
-✅ **Actions are stable** - Zustand actions NOT in dependency arrays
-✅ **Functional updates** - \`setState(prev => prev + 1)\` for correctness
+✅ **Store actions are stable** - Zustand actions NOT in dependency arrays
+✅ **Use functional updates** - \`setState(prev => prev + 1)\` for correctness
 ✅ **useRef for non-UI data** - Doesn't trigger re-renders
 ✅ **Derive, don't mirror** - \`const upper = prop.toUpperCase()\` not useState
 ✅ **DOM listeners stable** - Keep effect deps static; read live store values via refs; do not reattach listeners on every state change
@@ -730,7 +733,7 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
     3. **NO RUNTIME ERRORS:** Write robust, fault-tolerant code. Handle all edge cases gracefully with fallbacks. Never throw uncaught errors that can crash the application.
     4. **NO UNDEFINED VALUES/PROPERTIES/FUNCTIONS/COMPONENTS etc:** Ensure all variables, functions, and components are defined before use. Never use undefined values. If you use something that isn't already defined, you need to define it.
     5. **STATE UPDATE INTEGRITY:** Never call state setters directly during the render phase; all state updates must originate from event handlers or useEffect hooks to prevent infinite loops.
-    6. **STATE SELECTOR STABILITY:** When using Zustand, ALWAYS select primitive values individually. NEVER \`useStore((state) => ({ ... }))\` (returns new object = infinite loop). NEVER \`useStore(s => s.getXxx())\` (method calls return new references). NEVER \`useStore()\` without selector (whole object = crash). See REACT INFINITE LOOP PREVENTION section for complete patterns.
+    6. **🔥 ZUSTAND ZERO-TOLERANCE RULE 🔥:** ABSOLUTE LAW: useStore(s => s.primitive) ONLY. No object selectors. No exceptions. Any useStore(s => ({...})), useStore(), or useStore(s => s.getXxx()) = INSTANT CRASH. Multiple values? Call useStore multiple times - this is the ONLY correct pattern. See REACT INFINITE LOOP PREVENTION section for complete patterns.
     
     **UI/UX EXCELLENCE CRITICAL RULES:**
     7. **VISUAL HIERARCHY CLARITY:** Every interface must have clear visual hierarchy - never create pages with uniform text sizes or equal visual weight for all elements

@@ -41,8 +41,7 @@ export class FileManager implements IFileManager {
     }
 
     saveGeneratedFiles(files: FileOutputType[]): FileState[] {
-        const state = this.stateManager.getState();
-        const filesMap = { ...state.generatedFilesMap };
+        const filesMap = { ...this.stateManager.getState().generatedFilesMap };
         const fileStates: FileState[] = [];
         
         for (const file of files) {
@@ -78,22 +77,21 @@ export class FileManager implements IFileManager {
         }
         
         this.stateManager.setState({
-            ...state,
+            ...this.stateManager.getState(),
             generatedFilesMap: filesMap
         });
         return fileStates;
     }
 
     deleteFiles(filePaths: string[]): void {
-        const state = this.stateManager.getState();
-        const newFilesMap = { ...state.generatedFilesMap };
+        const newFilesMap = { ...this.stateManager.getState().generatedFilesMap };
         
         for (const filePath of filePaths) {
             delete newFilesMap[filePath];
         }
         
         this.stateManager.setState({
-            ...state,
+            ...this.stateManager.getState(),
             generatedFilesMap: newFilesMap
         });
     }

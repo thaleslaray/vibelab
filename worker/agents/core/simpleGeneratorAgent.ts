@@ -187,7 +187,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     ): Promise<CodeGenState> {
 
         const { query, language, frameworks, hostname, inferenceContext, templateInfo } = initArgs;
-        const sandboxSessionId = inferenceContext.agentId; // Let the initial sessionId be the agentId
+        const sandboxSessionId = DeploymentManager.generateNewSessionId();
         this.initLogger(inferenceContext.agentId, sandboxSessionId, inferenceContext.userId);
         
         // Generate a blueprint
@@ -250,7 +250,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info("Initial commands executed successfully");
         } catch (error) {
             this.logger().error("Error during async initialization:", error);
-            throw error;
+            // throw error;
         }
     }
 
@@ -501,6 +501,35 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         };
     }
 
+    private createNewIncompletePhase(phaseConcept: PhaseConceptType) {
+        this.setState({
+            ...this.state,
+            generatedPhases: [...this.state.generatedPhases, {
+                ...phaseConcept,
+                completed: false
+            }]
+        })
+
+        this.logger().info("Created new incomplete phase:", JSON.stringify(this.state.generatedPhases, null, 2));
+    }
+
+    private markPhaseComplete(phaseName: string) {
+        // First find the phase
+        const phases = this.state.generatedPhases;
+        if (!phases.some(p => p.name === phaseName)) {
+            this.logger().error(`Phase ${phaseName} not found in generatedPhases array`);
+            throw new Error(`Phase ${phaseName} not found in generatedPhases array`);
+        }
+        
+        // Update the phase
+        this.setState({
+            ...this.state,
+            generatedPhases: phases.map(p => p.name === phaseName ? { ...p, completed: true } : p)
+        });
+
+        this.logger().info("Completed phases:", JSON.stringify(phases, null, 2));
+    }
+
     private broadcastError(context: string, error: unknown): void {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.logger().error(`${context}:`, error);
@@ -581,21 +610,29 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             message: 'Starting code generation',
             totalFiles: this.getTotalFiles()
         });
+        this.logger().info('Starting code generation', {
+            totalFiles: this.getTotalFiles()
+        });
         let currentDevState = CurrentDevState.PHASE_IMPLEMENTING;
         const generatedPhases = this.state.generatedPhases;
         const incompletedPhases = generatedPhases.filter(phase => !phase.completed);
         let phaseConcept : PhaseConceptType | undefined;
         if (incompletedPhases.length > 0) {
             phaseConcept = incompletedPhases[incompletedPhases.length - 1];
+            this.logger().info('Resuming code generation from incompleted phase', {
+                phase: phaseConcept
+            });
         } else if (generatedPhases.length > 0) {
             currentDevState = CurrentDevState.PHASE_GENERATING;
+            this.logger().info('Resuming code generation after generating all phases', {
+                phase: generatedPhases[generatedPhases.length - 1]
+            });
         } else {
             phaseConcept = this.state.blueprint.initialPhase;
-            this.setState({
-                ...this.state,
-                currentPhase: phaseConcept,
-                generatedPhases: [{...phaseConcept, completed: false}]
+            this.logger().info('Starting code generation from initial phase', {
+                phase: phaseConcept
             });
+            this.createNewIncompletePhase(phaseConcept);
         }
 
         let staticAnalysisCache: StaticAnalysisResponse | undefined;
@@ -902,16 +939,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             lastPhase: true
         }
         
-        this.setState({
-            ...this.state,
-            generatedPhases: [
-                ...this.state.generatedPhases,
-                {
-                    ...phaseConcept,
-                    completed: false
-                }
-            ]
-        });
+        this.createNewIncompletePhase(phaseConcept);
 
         const currentIssues = await this.fetchAllIssues(true);
         
@@ -1030,16 +1058,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             return undefined;
         }
         
-        this.setState({
-            ...this.state,
-            generatedPhases: [
-                ...this.state.generatedPhases,
-                {
-                    ...result,
-                    completed: false
-                }
-            ],
-        });
+        this.createNewIncompletePhase(result);
         // Notify phase generation complete
         this.broadcast(WebSocketMessageResponses.PHASE_GENERATED, {
             message: `Generated next phase: ${result.name}`,
@@ -1106,7 +1125,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             message: `Validating files for phase: ${phase.name}`,
             phase: phase,
         });
-    
+
         // Await the already-created realtime code fixer promises
         const finalFiles = await Promise.allSettled(result.fixedFilePromises).then((results: PromiseSettledResult<FileOutputType>[]) => {
             return results.map((result) => {
@@ -1164,15 +1183,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             message: "Files generated successfully for phase"
         });
     
-        const previousPhases = this.state.generatedPhases;
-        // Replace the phase with the new one
-        const updatedPhases = previousPhases.map(p => p.name === phase.name ? {...p, completed: true} : p);
-        this.setState({
-            ...this.state,
-            generatedPhases: updatedPhases,
-        });
-
-        this.logger().info("Completed phases:", JSON.stringify(updatedPhases, null, 2));
+        this.markPhaseComplete(phase.name);
         
         return {
             files: finalFiles,
