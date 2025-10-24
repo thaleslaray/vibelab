@@ -244,15 +244,13 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     if (state.generatedFilesMap && Object.keys(state.generatedFilesMap).length > 0) {
                         updateStage('code', { status: 'completed' });
                         updateStage('validate', { status: 'completed' });
+                        if (urlChatId !== 'new') {
+                            logger.debug('🚀 Requesting preview deployment for existing chat with files');
+                            sendWebSocketMessage(websocket, 'preview');
+                        }
                     }
 
                     setIsInitialStateRestored(true);
-
-                    if (state.generatedFilesMap && Object.keys(state.generatedFilesMap).length > 0 && 
-                        urlChatId !== 'new') {
-                        logger.debug('🚀 Requesting preview deployment for existing chat with files');
-                        sendWebSocketMessage(websocket, 'preview');
-                    }
                 }
                 break;
             }
