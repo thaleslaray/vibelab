@@ -3,7 +3,7 @@
  * Handles template rebasing and git HTTP protocol
  */
 
-import git from 'isomorphic-git';
+import git from 'isomorphic-git/index.js';
 import { MemFS } from './memfs';
 import { SqliteFS } from './fs-adapter';
 import { createLogger } from '../../logger';
