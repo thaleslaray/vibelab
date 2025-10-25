@@ -1,28 +1,31 @@
 /**
  * In-memory filesystem for git clone operations
- * Minimal implementation for isomorphic-git compatibility
+ * Full async implementation for isomorphic-git compatibility
  */
 
 export class MemFS {
     private files = new Map<string, Uint8Array>();
     
-    /**
-     * Write file to memory
-     */
-    writeFile(path: string, data: string | Uint8Array): void {
+    constructor() {
+        // promises property required for isomorphic-git
+        Object.defineProperty(this, 'promises', {
+            value: this,
+            enumerable: true,
+            writable: false,
+            configurable: false
+        });
+    }
+    
+    async writeFile(path: string, data: string | Uint8Array): Promise<void> {
         const bytes = typeof data === 'string' 
             ? new TextEncoder().encode(data) 
             : data;
         
-        // Normalize path (remove leading slash for consistency)
         const normalized = path.startsWith('/') ? path.slice(1) : path;
         this.files.set(normalized, bytes);
     }
     
-    /**
-     * Read file from memory
-     */
-    readFile(path: string, options?: { encoding?: 'utf8' }): Uint8Array | string {
+    async readFile(path: string, options?: { encoding?: 'utf8' | string }): Promise<Uint8Array | string> {
         const normalized = path.startsWith('/') ? path.slice(1) : path;
         const data = this.files.get(normalized);
         
@@ -39,10 +42,7 @@ export class MemFS {
         return data;
     }
     
-    /**
-     * List directory contents
-     */
-    readdir(dirPath: string): string[] {
+    async readdir(dirPath: string): Promise<string[]> {
         const normalized = dirPath === '/' ? '' : (dirPath.startsWith('/') ? dirPath.slice(1) : dirPath);
         const prefix = normalized ? normalized + '/' : '';
         const results = new Set<string>();
@@ -60,10 +60,22 @@ export class MemFS {
         return Array.from(results);
     }
     
-    /**
-     * Get file/directory stats
-     */
-    stat(path: string) {
+    async stat(path: string): Promise<{
+        type: 'file' | 'dir';
+        mode: number;
+        size: number;
+        mtimeMs: number;
+        ino: number;
+        uid: number;
+        gid: number;
+        dev: number;
+        ctime: Date;
+        mtime: Date;
+        ctimeMs: number;
+        isFile: () => boolean;
+        isDirectory: () => boolean;
+        isSymbolicLink: () => boolean;
+    }> {
         const normalized = path.startsWith('/') ? path.slice(1) : path;
         
         // Check if it's a file
@@ -76,7 +88,14 @@ export class MemFS {
                 mtimeMs: Date.now(),
                 ino: 0,
                 uid: 0,
-                gid: 0
+                gid: 0,
+                dev: 0,
+                ctime: new Date(),
+                mtime: new Date(),
+                ctimeMs: Date.now(),
+                isFile: () => true,
+                isDirectory: () => false,
+                isSymbolicLink: () => false
             };
         }
         
@@ -91,7 +110,14 @@ export class MemFS {
                     mtimeMs: Date.now(),
                     ino: 0,
                     uid: 0,
-                    gid: 0
+                    gid: 0,
+                    dev: 0,
+                    ctime: new Date(),
+                    mtime: new Date(),
+                    ctimeMs: Date.now(),
+                    isFile: () => false,
+                    isDirectory: () => true,
+                    isSymbolicLink: () => false
                 };
             }
         }
@@ -101,44 +127,43 @@ export class MemFS {
         throw error;
     }
     
-    /**
-     * Lstat (same as stat for in-memory fs)
-     */
-    lstat(path: string) {
+    async lstat(path: string) {
         return this.stat(path);
     }
     
-    /**
-     * Create directory (no-op for in-memory fs)
-     */
-    mkdir(): void {
-        // No-op: directories are implicit in path structure
+    async mkdir(_path: string, _options?: any): Promise<void> {
+        // No-op: directories implicit in paths
     }
     
-    /**
-     * Remove directory (no-op for in-memory fs)
-     */
-    rmdir(): void {
+    async rmdir(_path: string): Promise<void> {
         // No-op
     }
     
-    /**
-     * Delete file
-     */
-    unlink(path: string): void {
-        const normalized = path.startsWith('/') ? path.slice(1) : path;
-        this.files.delete(normalized);
+    async rename(oldPath: string, newPath: string): Promise<void> {
+        const oldNormalized = oldPath.startsWith('/') ? oldPath.slice(1) : oldPath;
+        const newNormalized = newPath.startsWith('/') ? newPath.slice(1) : newPath;
+        
+        const data = this.files.get(oldNormalized);
+        if (data) {
+            this.files.set(newNormalized, data);
+            this.files.delete(oldNormalized);
+        }
     }
     
-    /**
-     * Check if path exists
-     */
-    exists(path: string): boolean {
-        try {
-            this.stat(path);
-            return true;
-        } catch {
-            return false;
-        }
+    async chmod(_path: string, _mode: number): Promise<void> {
+        // No-op
+    }
+    
+    async readlink(_path: string): Promise<string> {
+        throw new Error('Symbolic links not supported in MemFS');
+    }
+    
+    async symlink(_target: string, _path: string): Promise<void> {
+        throw new Error('Symbolic links not supported in MemFS');
+    }
+    
+    async unlink(path: string): Promise<void> {
+        const normalized = path.startsWith('/') ? path.slice(1) : path;
+        this.files.delete(normalized);
     }
 }

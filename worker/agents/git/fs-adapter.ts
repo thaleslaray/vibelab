@@ -71,7 +71,7 @@ export class SqliteFS {
         // Ensure root directory exists
         this.sql`INSERT OR IGNORE INTO git_objects (path, parent_path, data, is_dir, mtime) VALUES ('', '', '', 1, ${Date.now()})`;
         
-        // Make promises property enumerable for isomorphic-git FileSystem detection
+        // promises property required for isomorphic-git
         Object.defineProperty(this, 'promises', {
             value: this,
             enumerable: true,
@@ -81,12 +81,9 @@ export class SqliteFS {
     }
 
     async readFile(path: string, options?: { encoding?: 'utf8' }): Promise<Uint8Array | string> {
-        // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
-        console.log(`[Git FS] readFile: ${normalized} (encoding: ${options?.encoding || 'binary'}) - START`);
         const result = this.sql<{ data: string; is_dir: number }>`SELECT data, is_dir FROM git_objects WHERE path = ${normalized}`;
         if (!result[0]) {
-            console.log(`[Git FS] readFile: ${normalized} - ENOENT`);
             const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, open '${path}'`);
             error.code = 'ENOENT';
             error.errno = -2;
@@ -94,7 +91,6 @@ export class SqliteFS {
             throw error;
         }
         
-        // Check if it's a directory (directories can't be read as files)
         if (result[0].is_dir) {
             const error: NodeJS.ErrnoException = new Error(`EISDIR: illegal operation on a directory, read '${path}'`);
             error.code = 'EISDIR';
@@ -105,9 +101,7 @@ export class SqliteFS {
         
         const base64Data = result[0].data;
         
-        // Decode from base64 - handle empty files
         if (!base64Data) {
-            console.log(`[Git FS] readFile: ${normalized} -> empty file`);
             return options?.encoding === 'utf8' ? '' : new Uint8Array(0);
         }
         
@@ -117,15 +111,11 @@ export class SqliteFS {
             bytes[i] = binaryString.charCodeAt(i);
         }
         
-        const fileContent = options?.encoding === 'utf8' ? new TextDecoder().decode(bytes) : bytes;
-        console.log(`[Git FS] readFile: ${normalized} -> ${bytes.length} bytes - COMPLETE`);
-        return fileContent;
+        return options?.encoding === 'utf8' ? new TextDecoder().decode(bytes) : bytes;
     }
 
     async writeFile(path: string, data: Uint8Array | string): Promise<void> {
-        // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
-        console.log(`[Git FS] writeFile: ${normalized} - START`);
         
         if (!normalized) {
             throw new Error('Cannot write to root');
@@ -173,15 +163,11 @@ export class SqliteFS {
         }
         
         this.sql`INSERT OR REPLACE INTO git_objects (path, parent_path, data, is_dir, mtime) VALUES (${normalized}, ${parentPath}, ${base64Content}, 0, ${Date.now()})`;
-        console.log(`[Git FS] writeFile: ${normalized} -> ${bytes.length} bytes written - COMPLETE`);
     }
 
     async unlink(path: string): Promise<void> {
-        // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
-        console.log(`[Git FS] unlink: ${normalized} - START`);
         
-        // Check if exists and is not a directory
         const existing = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
         if (!existing[0]) {
             const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, unlink '${path}'`);
@@ -199,15 +185,11 @@ export class SqliteFS {
         }
         
         this.sql`DELETE FROM git_objects WHERE path = ${normalized} AND is_dir = 0`;
-        console.log(`[Git FS] unlink: ${normalized} -> deleted - COMPLETE`);
     }
 
     async readdir(path: string): Promise<string[]> {
-        // Normalize path (remove leading/trailing slashes)
         const normalized = path.replace(/^\/+|\/+$/g, '');
-        console.log(`[Git FS] readdir: ${normalized} - START`);
         
-        // Check if directory exists
         const dirCheck = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
         if (!dirCheck[0] || !dirCheck[0].is_dir) {
             const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, scandir '${path}'`);
@@ -227,20 +209,14 @@ export class SqliteFS {
             return parts[parts.length - 1];
         });
 
-        console.log(`[Git FS] readdir: ${normalized} -> [${children.join(', ')}] (${children.length} entries) - COMPLETE`);
         return children;
     }
 
-    async mkdir(path: string, _options?: { recursive?: boolean }): Promise<void> {
-        // Normalize path (remove leading/trailing slashes)
+    async mkdir(path: string, _options?: any): Promise<void> {
         const normalized = path.replace(/^\/+|\/+$/g, '');
         
-        // Don't create root (already exists)
         if (!normalized) return;
         
-        console.log(`[Git FS] mkdir: ${normalized} - START`);
-        
-        // Quick check: if parent is root, we can skip parent validation
         const parts = normalized.split('/');
         const isDirectChildOfRoot = parts.length === 1;
         
@@ -263,11 +239,8 @@ export class SqliteFS {
         const existing = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
         if (existing[0]) {
             if (existing[0].is_dir === 1) {
-                // Already exists as directory - this is OK (idempotent)
-                console.log(`[Git FS] mkdir: ${normalized} already exists - COMPLETE`);
                 return;
             } else {
-                // Exists as file - can't create directory
                 const error: NodeJS.ErrnoException = new Error(`EEXIST: file already exists, mkdir '${path}'`);
                 error.code = 'EEXIST';
                 error.errno = -17;
@@ -276,16 +249,12 @@ export class SqliteFS {
             }
         }
         
-        // Create directory entry (reuse parts from earlier)
         const parentPath = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
         this.sql`INSERT OR IGNORE INTO git_objects (path, parent_path, data, is_dir, mtime) VALUES (${normalized}, ${parentPath}, '', 1, ${Date.now()})`;
-        console.log(`[Git FS] mkdir: ${normalized} created - COMPLETE`);
     }
 
     async rmdir(path: string): Promise<void> {
-        // Normalize path (remove leading/trailing slashes)
         const normalized = path.replace(/^\/+|\/+$/g, '');
-        console.log(`[Git FS] rmdir: ${normalized} - START`);
         
         if (!normalized) {
             throw new Error('Cannot remove root directory');
@@ -318,15 +287,11 @@ export class SqliteFS {
             throw error;
         }
         
-        // Remove the directory
         this.sql`DELETE FROM git_objects WHERE path = ${normalized}`;
-        console.log(`[Git FS] rmdir: ${normalized} -> deleted - COMPLETE`);
     }
 
     async stat(path: string): Promise<{ type: 'file' | 'dir'; mode: number; size: number; mtimeMs: number }> {
-        // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
-        console.log(`[Git FS] stat: ${normalized} - START`);
         const result = this.sql<{ data: string; mtime: number; is_dir: number }>`SELECT data, mtime, is_dir FROM git_objects WHERE path = ${normalized}`;
         if (!result[0]) {
             const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, stat '${path}'`);
@@ -362,24 +327,20 @@ export class SqliteFS {
             // Add methods that isomorphic-git expects
             isFile: () => !isDir,
             isDirectory: () => isDir,
-            isSymbolicLink: () => false,  // We don't support symlinks yet
+            isSymbolicLink: () => false
         };
-        console.log(`[Git FS] stat: ${normalized} -> ${statResult.type} (${statResult.size} bytes) - COMPLETE`);
         return statResult;
     }
 
     async lstat(path: string) {
-        console.log(`[Git FS] lstat: ${path} (delegating to stat)`);
         return await this.stat(path);
     }
 
     async symlink(target: string, path: string): Promise<void> {
-        console.log(`[Git FS] symlink: ${path} -> ${target}`);
         await this.writeFile(path, target);
     }
 
     async readlink(path: string): Promise<string> {
-        console.log(`[Git FS] readlink: ${path}`);
         return (await this.readFile(path, { encoding: 'utf8' })) as string;
     }
 
@@ -388,14 +349,11 @@ export class SqliteFS {
      * Required by isomorphic-git's init check
      */
     async exists(path: string): Promise<boolean> {
-        console.log(`[Git FS] exists: ${path}`);
         try {
             await this.stat(path);
-            console.log(`[Git FS] exists: ${path} -> true`);
             return true;
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-                console.log(`[Git FS] exists: ${path} -> false`);
                 return false;
             }
             throw err;
@@ -406,7 +364,6 @@ export class SqliteFS {
      * Alias for writeFile (isomorphic-git sometimes uses 'write')
      */
     async write(path: string, data: Uint8Array | string): Promise<void> {
-        console.log(`[Git FS] write: ${path}`);
         return await this.writeFile(path, data);
     }
 
@@ -415,7 +372,6 @@ export class SqliteFS {
      * Returns array of {path, data}
      */
     exportGitObjects(): Array<{ path: string; data: Uint8Array }> {
-        console.log('[Git FS] Exporting git objects...');
         const objects = this.sql<{ path: string; data: string; is_dir: number }>`
             SELECT path, data, is_dir FROM git_objects WHERE path LIKE '.git/%'
         `;
@@ -433,12 +389,11 @@ export class SqliteFS {
             }
             
             exported.push({
-                path: '/' + obj.path, // Add leading slash for consistency
+                path: obj.path,
                 data: bytes
             });
         }
         
-        console.log(`[Git FS] Exported ${exported.length} git objects`);
         return exported;
     }
 }

@@ -59,10 +59,6 @@ export class FileManager implements IFileManager {
             if (oldFileContents !== file.fileContents) {
                 try {
                     lastDiff = Diff.createPatch(file.filePath, oldFileContents, file.fileContents);
-                    if (lastDiff) {
-                        const isNewFile = oldFileContents === '';
-                        console.log(`Generated diff for ${isNewFile ? 'new' : ''} file ${file.filePath}:`, lastDiff);
-                    }
                 } catch (error) {
                     console.error(`Failed to generate diff for file ${file.filePath}:`, error);
                 }

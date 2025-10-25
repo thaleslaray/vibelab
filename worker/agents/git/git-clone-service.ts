@@ -14,6 +14,7 @@ export interface RepositoryBuildOptions {
     gitObjects: Array<{ path: string; data: Uint8Array }>;
     templateDetails: SandboxTemplateDetails | null | undefined;
     appQuery: string;
+    appCreatedAt?: Date;  // App creation timestamp for deterministic template commit
 }
 
 export class GitCloneService {
@@ -28,75 +29,170 @@ export class GitCloneService {
      * Result: Template base + agent's commit history on top
      */
     static async buildRepository(options: RepositoryBuildOptions): Promise<MemFS> {
-        const { gitObjects, templateDetails, appQuery } = options;
+        const { gitObjects, templateDetails, appQuery, appCreatedAt } = options;
         const fs = new MemFS();
         
         try {
-            logger.info('Building git repository with template rebasing', { 
+            logger.info('Building git repository with template rebase', { 
                 templateName: templateDetails?.name,
-                templateFileCount: templateDetails ? Object.keys(templateDetails.allFiles).length : 0,
                 gitObjectCount: gitObjects.length
             });
             
-            // Step 1: Create base commit with template files
-            await git.init({ fs, dir: '/', defaultBranch: 'main' });
-            
-            if (templateDetails?.allFiles) {
-                // Write template files
-                for (const [path, content] of Object.entries(templateDetails.allFiles)) {
-                    fs.writeFile(path, content);
+            // If no agent commits yet, just create template base
+            if (gitObjects.length === 0) {
+                await git.init({ fs, dir: '/', defaultBranch: 'main' });
+                
+                if (templateDetails && templateDetails.allFiles) {
+                    // Create template commit
+                    for (const [path, content] of Object.entries(templateDetails.allFiles)) {
+                        await fs.writeFile(path, content as string);
+                        await git.add({ fs, dir: '/', filepath: path });
+                    }
+                    await git.commit({
+                        fs, dir: '/',
+                        message: `Template: ${templateDetails.name}`,
+                        author: { 
+                            name: 'Vibesdk', 
+                            email: 'template@vibesdk.com',
+                            timestamp: appCreatedAt ? Math.floor(appCreatedAt.getTime() / 1000) : 0
+                        }
+                    });
                 }
                 
-                // Stage and commit template files
-                await git.add({ fs, dir: '/', filepath: '.' });
-                const templateCommitOid = await git.commit({
-                    fs,
-                    dir: '/',
-                    message: `Template: ${templateDetails.name}\n\nBase template for Vibesdk application\nQuery: ${appQuery}`,
-                    author: {
-                        name: 'Vibesdk Agent',
-                        email: 'vibesdk-bot@cloudflare.dev',
-                        timestamp: Math.floor(Date.now() / 1000)
+                return fs;
+            }
+            
+            await git.init({ fs, dir: '/', defaultBranch: 'main' });
+            
+            // Create template base commit
+            let baseCommit: string | null = null;
+            if (templateDetails && templateDetails.allFiles && Object.keys(templateDetails.allFiles).length > 0) {
+                logger.info('Creating template base', { 
+                    templateName: templateDetails.name,
+                    fileCount: Object.keys(templateDetails.allFiles).length
+                });
+                
+                for (const [path, content] of Object.entries(templateDetails.allFiles)) {
+                    await fs.writeFile(path, content as string);
+                    await git.add({ fs, dir: '/', filepath: path });
+                }
+                
+                baseCommit = await git.commit({
+                    fs, dir: '/',
+                    message: `Template: ${templateDetails.name}\n\nBase template for ${appQuery}`,
+                    author: { 
+                        name: 'Vibesdk', 
+                        email: 'template@vibesdk.com',
+                        timestamp: appCreatedAt ? Math.floor(appCreatedAt.getTime() / 1000) : 0
                     }
                 });
                 
-                logger.info('Created template base commit', { oid: templateCommitOid });
+                logger.info('Template base created', { baseCommit });
             }
             
-            // Step 2: Import exported git objects from agent
-            if (gitObjects.length > 0) {
-                logger.info('Importing git objects from agent', { count: gitObjects.length });
-                
-                for (const obj of gitObjects) {
-                    fs.writeFile(obj.path, obj.data);
-                }
-                
-                // Step 3: Get agent's HEAD and update main branch
-                try {
-                    const agentHeadOid = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
-                    
-                    // Update main branch to point to agent's HEAD
-                    // This rebases agent's commits on top of template
-                    await git.writeRef({
-                        fs,
-                        dir: '/',
-                        ref: 'refs/heads/main',
-                        value: agentHeadOid,
-                        force: true
-                    });
-                    
-                    logger.info('Rebased agent history on template', { 
-                        agentHead: agentHeadOid 
-                    });
-                } catch (error) {
-                    logger.warn('Could not rebase agent history', { error });
-                    // Template commit is already in place, continue
-                }
-            } else {
-                logger.info('No agent git history found, using template only');
+            // Find agent's HEAD from exported objects
+            const headFile = gitObjects.find(obj => obj.path === '.git/HEAD');
+            const headContent = headFile ? new TextDecoder().decode(headFile.data).trim() : null;
+            
+            let agentHeadOid: string | null = null;
+            if (headContent && headContent.startsWith('ref: ')) {
+                // HEAD is a ref, resolve it
+                const refPath = headContent.slice(5).trim();
+                const refFile = gitObjects.find(obj => obj.path === `.git/${refPath}`);
+                agentHeadOid = refFile ? new TextDecoder().decode(refFile.data).trim() : null;
+            } else if (headContent && headContent.length === 40) {
+                // HEAD is direct SHA
+                agentHeadOid = headContent;
             }
             
-            logger.info('Git repository built successfully');
+            if (!agentHeadOid) {
+                throw new Error('Could not determine agent HEAD from exported objects');
+            }
+            
+            logger.info('Found agent original HEAD', { agentHeadOid });
+            
+            // Import git objects (skip refs to preserve template base)
+            logger.info('Importing agent git objects', { count: gitObjects.length });
+            let importedCount = 0;
+            for (const obj of gitObjects) {
+                if (obj.path.startsWith('.git/refs/') || obj.path === '.git/HEAD' || obj.path === '.git/packed-refs') {
+                    continue;
+                }
+                await fs.writeFile(obj.path, obj.data);
+                importedCount++;
+            }
+            logger.info('Imported git objects (excluding refs)', { importedCount });
+            
+            // Get agent's commit history (oldest to newest)
+            const agentLog = await git.log({ fs, dir: '/', ref: agentHeadOid });
+            const commitsOldestFirst = agentLog.reverse();
+            
+            logger.info('Replaying agent commits on template base', { 
+                commitCount: commitsOldestFirst.length,
+                hasTemplate: !!baseCommit
+            });
+            
+            // Replay agent commits on top of template base
+            for (const commitInfo of commitsOldestFirst) {
+                // Collect files from agent's commit tree
+                const agentFiles: Array<{ path: string; oid: string }> = [];
+                
+                const walkTree = async (treeOid: string, basePath: string = '') => {
+                    const { tree } = await git.readTree({ fs, dir: '/', oid: treeOid });
+                    
+                    for (const entry of tree) {
+                        const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
+                        
+                        if (entry.type === 'blob') {
+                            agentFiles.push({ path: fullPath, oid: entry.oid });
+                        } else if (entry.type === 'tree') {
+                            await walkTree(entry.oid, fullPath);
+                        }
+                    }
+                };
+                
+                await walkTree(commitInfo.commit.tree);
+                
+                // Write agent files
+                for (const file of agentFiles) {
+                    const { blob } = await git.readBlob({ fs, dir: '/', oid: file.oid });
+                    await fs.writeFile(file.path, blob);
+                }
+                
+                // Stage all files (template + agent)
+                const allFiles: string[] = [];
+                const getAllFiles = async (dir: string): Promise<void> => {
+                    const entries = await fs.readdir(dir);
+                    for (const entry of entries) {
+                        const fullPath = dir === '/' ? entry : `${dir}/${entry}`;
+                        if (entry === '.git' || fullPath === '.git') continue;
+                        
+                        const stat = await fs.stat(fullPath);
+                        if (stat.type === 'dir') {
+                            await getAllFiles(fullPath);
+                        } else {
+                            allFiles.push(fullPath.startsWith('/') ? fullPath.slice(1) : fullPath);
+                        }
+                    }
+                };
+                
+                await getAllFiles('/');
+                
+                for (const filepath of allFiles) {
+                    await git.add({ fs, dir: '/', filepath });
+                }
+                
+                // Commit with original metadata
+                await git.commit({
+                    fs,
+                    dir: '/',
+                    message: commitInfo.commit.message,
+                    author: commitInfo.commit.author,
+                    committer: commitInfo.commit.committer || commitInfo.commit.author
+                });
+            }
+            
+            logger.info('Repository built with proper template base and agent commits');
             return fs;
         } catch (error) {
             logger.error('Failed to build git repository', { error });
@@ -111,8 +207,21 @@ export class GitCloneService {
      */
     static async handleInfoRefs(fs: MemFS): Promise<string> {
         try {
+            logger.info('Generating info/refs response');
+            
             const head = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
-            const branches = await git.listBranches({ fs, dir: '/' });
+            logger.info('Resolved HEAD', { head });
+            
+            // Manually list branches from .git/refs/heads/ to avoid git.listBranches() hanging
+            let branches: string[] = [];
+            try {
+                const headsDir = await fs.readdir('.git/refs/heads');
+                branches = headsDir.filter((name: string) => !name.startsWith('.'));
+                logger.info('Found branches', { branches });
+            } catch (err) {
+                logger.warn('No branches found', { error: err });
+                branches = [];
+            }
             
             // Git HTTP protocol: info/refs response format
             let response = '001e# service=git-upload-pack\n0000';
@@ -123,13 +232,19 @@ export class GitCloneService {
             
             // Branch refs
             for (const branch of branches) {
-                const oid = await git.resolveRef({ fs, dir: '/', ref: `refs/heads/${branch}` });
-                response += this.formatPacketLine(`${oid} refs/heads/${branch}\n`);
+                try {
+                    const oid = await git.resolveRef({ fs, dir: '/', ref: `refs/heads/${branch}` });
+                    response += this.formatPacketLine(`${oid} refs/heads/${branch}\n`);
+                    logger.info('Added branch ref', { branch, oid });
+                } catch (err) {
+                    logger.warn('Failed to resolve branch', { branch, error: err });
+                }
             }
             
             // Flush packet
             response += '0000';
             
+            logger.info('Generated info/refs response', { responseLength: response.length });
             return response;
         } catch (error) {
             logger.error('Failed to handle info/refs', { error });
@@ -139,66 +254,54 @@ export class GitCloneService {
 
     /**
      * Handle git upload-pack request (actual clone operation)
-     * Generates and returns packfile for git client
+     * Includes all git objects to ensure template-rebased commits work correctly
      */
     static async handleUploadPack(fs: MemFS): Promise<Uint8Array> {
         try {
-            const head = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
-            const objects = new Set<string>();
+            // Collect all git objects from filesystem
+            const allObjects = new Set<string>();
             
-            const walkCommits = async (oid: string): Promise<void> => {
-                if (objects.has(oid)) return; // Already visited
-                objects.add(oid);
-                
-                const { commit } = await git.readCommit({ fs, dir: '/', oid });
-                objects.add(commit.tree);
-                
-                // Recursively collect all tree and blob objects from this commit
-                await collectTreeObjects(commit.tree);
-                
-                // Walk parent commits recursively
-                for (const parentOid of commit.parent) {
-                    await walkCommits(parentOid);
-                }
-            };
-            
-            // Recursively collect all tree and blob objects
-            const collectTreeObjects = async (treeOid: string): Promise<void> => {
-                if (objects.has(treeOid)) return;
-                objects.add(treeOid);
-                
-                const { tree } = await git.readTree({ fs, dir: '/', oid: treeOid });
-                
-                for (const entry of tree) {
-                    objects.add(entry.oid);
-                    if (entry.type === 'tree') {
-                        await collectTreeObjects(entry.oid);
+            const objectDirs = await fs.readdir('.git/objects');
+            for (const item of objectDirs) {
+                if (item.length === 2 && /[0-9a-f]{2}/.test(item)) {
+                    const objectFiles = await fs.readdir(`.git/objects/${item}`);
+                    for (const file of objectFiles) {
+                        if (file.length === 38 && /[0-9a-f]{38}/.test(file)) {
+                            allObjects.add(item + file);
+                        }
                     }
                 }
-            };
+            }
             
-            await walkCommits(head);
-            
-            logger.info('Generating packfile with full commit history', { 
-                objectCount: objects.size 
-            });
-            
-            // Create packfile with all objects
+            logger.info('Generating packfile', { objectCount: allObjects.size });
             const packResult = await git.packObjects({ 
                 fs, 
                 dir: '/', 
-                oids: Array.from(objects)
+                oids: Array.from(allObjects)
             });
             
-            // packObjects returns { packfile: Uint8Array }
             const packfile = packResult.packfile;
             
             if (!packfile) {
                 throw new Error('Failed to generate packfile');
             }
             
-            // Wrap packfile in sideband format for git protocol
-            return this.wrapInSideband(packfile);
+            // NAK packet: "0008NAK\n"
+            const nakPacket = new Uint8Array([
+                0x30, 0x30, 0x30, 0x38,
+                0x4e, 0x41, 0x4b,
+                0x0a
+            ]);
+            
+            // Wrap packfile in sideband format
+            const sideband = this.wrapInSideband(packfile);
+            
+            // Concatenate NAK + sideband packfile
+            const result = new Uint8Array(nakPacket.length + sideband.length);
+            result.set(nakPacket, 0);
+            result.set(sideband, nakPacket.length);
+            
+            return result;
         } catch (error) {
             logger.error('Failed to handle upload-pack', { error });
             throw new Error(`Failed to generate pack: ${error instanceof Error ? error.message : String(error)}`);
@@ -215,16 +318,39 @@ export class GitCloneService {
     }
 
     /**
-     * Wrap packfile data in sideband format
-     * Sideband-64k protocol for multiplexing pack data and progress
+     * Wrap packfile in sideband-64k format
      */
     private static wrapInSideband(packfile: Uint8Array): Uint8Array {
-        // Simple implementation: send packfile in one sideband message
-        // Channel 1 = pack data
-        const header = new Uint8Array([1]); // Sideband channel 1
-        const result = new Uint8Array(header.length + packfile.length);
-        result.set(header, 0);
-        result.set(packfile, header.length);
+        const CHUNK_SIZE = 65515;
+        const chunks: Uint8Array[] = [];
+        let offset = 0;
+        while (offset < packfile.length) {
+            const chunkSize = Math.min(CHUNK_SIZE, packfile.length - offset);
+            const chunk = packfile.slice(offset, offset + chunkSize);
+            
+            const packetLength = 4 + 1 + chunkSize;
+            const lengthHex = packetLength.toString(16).padStart(4, '0');
+            const packet = new Uint8Array(4 + 1 + chunkSize);
+            for (let i = 0; i < 4; i++) {
+                packet[i] = lengthHex.charCodeAt(i);
+            }
+            packet[4] = 0x01;
+            packet.set(chunk, 5);
+            
+            chunks.push(packet);
+            offset += chunkSize;
+        }
+        
+        const flush = new Uint8Array([0x30, 0x30, 0x30, 0x30]);
+        chunks.push(flush);
+        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        const result = new Uint8Array(totalLength);
+        let resultOffset = 0;
+        for (const chunk of chunks) {
+            result.set(chunk, resultOffset);
+            resultOffset += chunk.length;
+        }
+        
         return result;
     }
 }

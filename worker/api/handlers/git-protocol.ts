@@ -46,17 +46,21 @@ async function verifyGitAccess(
     request: Request,
     env: Env,
     appId: string
-): Promise<boolean> {
+): Promise<{ hasAccess: boolean; appCreatedAt?: Date }> {
+    logger.info('Verifying git access', { appId });
     const appService = new AppService(env);
     const app = await appService.getAppDetails(appId);
     
+    logger.info('App details retrieved', { appId, found: !!app, visibility: app?.visibility });
+    
     if (!app) {
-        return false;
+        logger.warn('App not found in database', { appId });
+        return { hasAccess: false };
     }
 
     // Public apps: anyone can clone
     if (app.visibility === 'public') {
-        return true;
+        return { hasAccess: true, appCreatedAt: app.createdAt || undefined };
     }
 
     // Private apps: require authentication
@@ -73,7 +77,7 @@ async function verifyGitAccess(
     }
 
     if (!token) {
-        return false;
+        return { hasAccess: false };
     }
 
     // Verify token using JWTUtils
@@ -81,11 +85,12 @@ async function verifyGitAccess(
     const payload = await jwtUtils.verifyToken(token);
 
     if (!payload) {
-        return false;
+        return { hasAccess: false };
     }
 
     // Check if user owns the app
-    return payload.sub === app.userId;
+    const hasAccess = payload.sub === app.userId;
+    return { hasAccess, appCreatedAt: hasAccess ? (app.createdAt || undefined) : undefined };
 }
 
 /**
@@ -94,7 +99,7 @@ async function verifyGitAccess(
 async function handleInfoRefs(request: Request, env: Env, appId: string): Promise<Response> {
     try {
         // Verify access first
-        const hasAccess = await verifyGitAccess(request, env, appId);
+        const { hasAccess, appCreatedAt } = await verifyGitAccess(request, env, appId);
         if (!hasAccess) {
             return new Response('Repository not found', { status: 404 });
         }
@@ -122,7 +127,8 @@ async function handleInfoRefs(request: Request, env: Env, appId: string): Promis
         const repoFS = await GitCloneService.buildRepository({
             gitObjects,
             templateDetails,
-            appQuery: query
+            appQuery: query,
+            appCreatedAt
         });
         
         // Generate info/refs response
@@ -146,7 +152,7 @@ async function handleInfoRefs(request: Request, env: Env, appId: string): Promis
 async function handleUploadPack(request: Request, env: Env, appId: string): Promise<Response> {
     try {
         // Verify access first
-        const hasAccess = await verifyGitAccess(request, env, appId);
+        const { hasAccess, appCreatedAt } = await verifyGitAccess(request, env, appId);
         if (!hasAccess) {
             return new Response('Repository not found', { status: 404 });
         }
@@ -167,7 +173,8 @@ async function handleUploadPack(request: Request, env: Env, appId: string): Prom
         const repoFS = await GitCloneService.buildRepository({
             gitObjects,
             templateDetails,
-            appQuery: query
+            appQuery: query,
+            appCreatedAt
         });
         
         // Generate packfile with full commit history
