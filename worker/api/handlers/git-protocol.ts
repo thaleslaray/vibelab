@@ -8,6 +8,8 @@
 import { getAgentStub } from '../../agents';
 import { createLogger } from '../../logger';
 import { GitCloneService } from '../../agents/git/git-clone-service';
+import { AppService } from '../../database/services/AppService';
+import { JWTUtils } from '../../utils/jwtUtils';
 
 const logger = createLogger('GitProtocol');
 
@@ -38,10 +40,65 @@ function extractAppId(pathname: string): string | null {
 }
 
 /**
+ * Verify git access (public apps or owner with valid token)
+ */
+async function verifyGitAccess(
+    request: Request,
+    env: Env,
+    appId: string
+): Promise<boolean> {
+    const appService = new AppService(env);
+    const app = await appService.getAppDetails(appId);
+    
+    if (!app) {
+        return false;
+    }
+
+    // Public apps: anyone can clone
+    if (app.visibility === 'public') {
+        return true;
+    }
+
+    // Private apps: require authentication
+    const authHeader = request.headers.get('Authorization');
+    let token: string | null = null;
+
+    if (authHeader?.startsWith('Bearer ')) {
+        token = authHeader.slice(7);
+    } else if (authHeader?.startsWith('Basic ')) {
+        // Git sends credentials as Basic auth
+        const decoded = atob(authHeader.slice(6));
+        const [username, password] = decoded.split(':');
+        token = password || username;
+    }
+
+    if (!token) {
+        return false;
+    }
+
+    // Verify token using JWTUtils
+    const jwtUtils = JWTUtils.getInstance(env);
+    const payload = await jwtUtils.verifyToken(token);
+
+    if (!payload) {
+        return false;
+    }
+
+    // Check if user owns the app
+    return payload.sub === app.userId;
+}
+
+/**
  * Handle Git info/refs request
  */
-async function handleInfoRefs(env: Env, appId: string): Promise<Response> {
+async function handleInfoRefs(request: Request, env: Env, appId: string): Promise<Response> {
     try {
+        // Verify access first
+        const hasAccess = await verifyGitAccess(request, env, appId);
+        if (!hasAccess) {
+            return new Response('Repository not found', { status: 404 });
+        }
+        
         const agentStub = await getAgentStub(env, appId, true, logger);
         if (!agentStub || !(await agentStub.isInitialized())) {
             return new Response('Repository not found', { status: 404 });
@@ -86,8 +143,14 @@ async function handleInfoRefs(env: Env, appId: string): Promise<Response> {
 /**
  * Handle Git upload-pack request
  */
-async function handleUploadPack(env: Env, appId: string): Promise<Response> {
+async function handleUploadPack(request: Request, env: Env, appId: string): Promise<Response> {
     try {
+        // Verify access first
+        const hasAccess = await verifyGitAccess(request, env, appId);
+        if (!hasAccess) {
+            return new Response('Repository not found', { status: 404 });
+        }
+        
         const agentStub = await getAgentStub(env, appId, true, logger);
         if (!agentStub || !(await agentStub.isInitialized())) {
             return new Response('Repository not found', { status: 404 });
@@ -140,9 +203,9 @@ export async function handleGitProtocolRequest(
     
     // Route to appropriate handler
     if (GIT_INFO_REFS_PATTERN.test(pathname)) {
-        return handleInfoRefs(env, appId);
+        return handleInfoRefs(request, env, appId);
     } else if (GIT_UPLOAD_PACK_PATTERN.test(pathname)) {
-        return handleUploadPack(env, appId);
+        return handleUploadPack(request, env, appId);
     }
     
     return new Response('Not found', { status: 404 });
