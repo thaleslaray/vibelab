@@ -34,7 +34,7 @@ import { InferenceContext, AgentActionKey } from '../inferutils/config.types';
 import { AGENT_CONFIG } from '../inferutils/config';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
 import { fixProjectIssues } from '../../services/code-fixer';
-import { GitVersionControl, GitCloneService } from '../git';
+import { GitVersionControl } from '../git';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand } from '../utils/common';
 import { generateBlueprint } from '../planning/blueprint';
@@ -49,6 +49,7 @@ import { ConversationMessage, ConversationState } from '../inferutils/common';
 import { DeepCodeDebugger } from '../assistants/codeDebugger';
 import { DeepDebugResult } from './types';
 import { StateMigration } from './stateMigration';
+import { GitCloneService } from '../git/git-clone-service';
 
 interface Operations {
     codeReview: CodeReviewOperation;
@@ -162,8 +163,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             (s) => this.setState(s)
         );
 
-        // Initialize GitVersionControl
-        this.git = new GitVersionControl(this.sql);
+        // Initialize GitVersionControl (bind sql to preserve 'this' context)
+        this.git = new GitVersionControl(this.sql.bind(this));
 
         // Initialize FileManager
         this.fileManager = new FileManager(this.stateManager, () => this.getTemplateDetails(), this.git);
@@ -560,7 +561,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
         const readme = await this.operations.implementPhase.generateReadme(this.getOperationOptions());
 
-        this.fileManager.saveGeneratedFile(readme, "feat: README.md");
+        await this.fileManager.saveGeneratedFile(readme, "feat: README.md");
 
         this.broadcast(WebSocketMessageResponses.FILE_GENERATED, {
             message: 'README.md generated successfully',
@@ -1144,7 +1145,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
     
         // Update state with completed phase
-        this.fileManager.saveGeneratedFiles(finalFiles, `feat: ${phase.name}`);
+        await this.fileManager.saveGeneratedFiles(finalFiles, `feat: ${phase.name}`);
 
         this.logger().info("Files generated for phase:", phase.name, finalFiles.map(f => f.filePath));
 
@@ -1309,7 +1310,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.getOperationOptions()
         );
 
-        const fileState = this.fileManager.saveGeneratedFile(result, `fix: ${file.filePath}`);
+        const fileState = await this.fileManager.saveGeneratedFile(result, `fix: ${file.filePath}`);
 
         this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
             message: `Regenerated file: ${file.filePath}`,
@@ -1420,7 +1421,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }, this.getOperationOptions());
 
             if (fastCodeFixer.length > 0) {
-                this.fileManager.saveGeneratedFiles(fastCodeFixer, "fix: Fast smart code fixes");
+                await this.fileManager.saveGeneratedFiles(fastCodeFixer, "fix: Fast smart code fixes");
                 await this.deployToSandbox(fastCodeFixer);
                 this.logger().info("Fast smart code fixes applied successfully");
             }
@@ -1492,7 +1493,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                             filePurpose: allFiles.find(f => f.filePath === file.filePath)?.filePurpose || '',
                             fileContents: file.fileContents
                     }));
-                    this.fileManager.saveGeneratedFiles(fixedFiles, "fix: applied deterministic fixes");
+                    await this.fileManager.saveGeneratedFiles(fixedFiles, "fix: applied deterministic fixes");
                     
                     await this.deployToSandbox(fixedFiles, false, "fix: applied deterministic fixes");
                     this.logger().info("Deployed deterministic fixes to sandbox");
@@ -2023,7 +2024,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     '[cloudflarebutton]', 
                     prepareCloudflareButton(options.repositoryHtmlUrl, 'markdown')
                 );
-                this.fileManager.saveGeneratedFile(readmeFile, "feat: README updated with Cloudflare deploy button");
+                await this.fileManager.saveGeneratedFile(readmeFile, "feat: README updated with Cloudflare deploy button");
                 this.logger().info('README prepared with Cloudflare deploy button');
                 
                 // Deploy updated README to sandbox so it's visible in preview
@@ -2346,13 +2347,48 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
      * Returns git protocol advertisement
      */
     async handleGitInfoRefs(): Promise<string> {
-        const fs = await GitCloneService.buildRepository({
-            agentGitFS: this.git.fs,
-            templateDetails: this.templateDetailsCache,
-            appQuery: this.state.query
-        });
-        
-        return await GitCloneService.handleInfoRefs(fs);
+        try {
+            console.log('[Agent] handleGitInfoRefs called');
+            
+            // Ensure git has at least one commit before allowing clone
+            const head = await this.git.getHead();
+            console.log('[Agent] git.getHead() returned:', head);
+            if (!head) {
+                console.log('[Agent] No HEAD found, creating initial commit from current files');
+                
+                // Get all current files from fileManager
+                const allFiles = this.fileManager.getAllFiles();
+                
+                if (allFiles.length > 0) {
+                    // Create initial commit with current files
+                    const files = allFiles.map(f => ({
+                        filePath: f.filePath,
+                        fileContents: f.fileContents
+                    }));
+                    await this.git.commit(files, `Initial commit\n\nGenerated by Vibesdk\nQuery: ${this.state.query || 'N/A'}`);
+                    console.log('[Agent] Initial commit created with', files.length, 'files');
+                } else {
+                    console.log('[Agent] No files to commit, returning empty repo');
+                    // Return empty advertisement for truly empty repos
+                    return '001e# service=git-upload-pack\n0000';
+                }
+            }
+            
+            // Build repository with template rebasing
+            const repoFS = await GitCloneService.buildRepository({
+                agentGitFS: this.git.fs,
+                templateDetails: this.templateDetailsCache || null,
+                appQuery: this.state.query || 'N/A'
+            });
+            
+            // Use GitCloneService to handle info/refs
+            const result = await GitCloneService.handleInfoRefs(repoFS);
+            console.log('[Agent] handleGitInfoRefs completed, response length:', result.length);
+            return result;
+        } catch (error) {
+            console.error('[Agent] handleGitInfoRefs failed:', error);
+            throw error;
+        }
     }
 
     /**
@@ -2360,12 +2396,23 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
      * Returns packfile for git clone
      */
     async handleGitUploadPack(): Promise<Uint8Array> {
-        const fs = await GitCloneService.buildRepository({
-            agentGitFS: this.git.fs,
-            templateDetails: this.templateDetailsCache,
-            appQuery: this.state.query
-        });
-        
-        return await GitCloneService.handleUploadPack(fs);
+        try {
+            console.log('[Agent] handleGitUploadPack called');
+            
+            // Build repository with template rebasing
+            const repoFS = await GitCloneService.buildRepository({
+                agentGitFS: this.git.fs,
+                templateDetails: this.templateDetailsCache || null,
+                appQuery: this.state.query || 'N/A'
+            });
+            
+            // Use GitCloneService to handle upload-pack
+            const packfile = await GitCloneService.handleUploadPack(repoFS);
+            console.log('[Agent] handleGitUploadPack completed, packfile size:', packfile.length);
+            return packfile;
+        } catch (error) {
+            console.error('[Agent] handleGitUploadPack failed:', error);
+            throw error;
+        }
     }
 }

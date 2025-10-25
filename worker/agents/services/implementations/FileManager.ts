@@ -38,11 +38,12 @@ export class FileManager implements IFileManager {
         return FileProcessing.getAllFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
     }
 
-    saveGeneratedFile(file: FileOutputType, commitMessage: string): FileState {
-        return this.saveGeneratedFiles([file], commitMessage)[0];
+    async saveGeneratedFile(file: FileOutputType, commitMessage: string): Promise<FileState> {
+        const results = await this.saveGeneratedFiles([file], commitMessage);
+        return results[0];
     }
 
-    saveGeneratedFiles(files: FileOutputType[], commitMessage: string): FileState[] {
+    async saveGeneratedFiles(files: FileOutputType[], commitMessage: string): Promise<FileState[]> {
         const filesMap = { ...this.stateManager.getState().generatedFilesMap };
         const fileStates: FileState[] = [];
         
@@ -84,9 +85,11 @@ export class FileManager implements IFileManager {
         });
 
         try {
-            this.git.commit(fileStates, commitMessage);
+            console.log(`[FileManager] Committing ${fileStates.length} files:`, commitMessage);
+            await this.git.commit(fileStates, commitMessage);
+            console.log(`[FileManager] Commit successful`);
         } catch (error) {
-            console.error(`Failed to commit files:`, error, commitMessage);
+            console.error(`[FileManager] Failed to commit files:`, error, commitMessage);
         }
         return fileStates;
     }

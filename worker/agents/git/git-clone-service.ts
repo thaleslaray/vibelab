@@ -3,7 +3,7 @@
  * Handles template rebasing and git HTTP protocol
  */
 
-import git from 'isomorphic-git';
+import git from '@ashishkumar472/cf-git';
 import { MemFS } from './memfs';
 import { SqliteFS } from './fs-adapter';
 import { createLogger } from '../../logger';
@@ -139,17 +139,17 @@ export class GitCloneService {
         targetFS: MemFS,
         dirPath: string
     ): Promise<void> {
-        const entries = sourceFS.readdir(dirPath);
+        const entries = await sourceFS.readdir(dirPath);
         
         for (const entry of entries) {
             const fullPath = `${dirPath}/${entry}`;
             
             try {
-                const stat = sourceFS.stat(fullPath);
+                const stat = await sourceFS.stat(fullPath);
                 
                 if (stat.type === 'file') {
                     // Copy file
-                    const data = sourceFS.readFile(fullPath);
+                    const data = await sourceFS.readFile(fullPath);
                     targetFS.writeFile(fullPath, data as Uint8Array);
                 } else if (stat.type === 'dir') {
                     // Recursively copy directory

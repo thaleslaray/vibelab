@@ -16,13 +16,18 @@ export interface SqlExecutor {
 const MAX_OBJECT_SIZE = 900 * 1024; // 900KB
 
 export class SqliteFS {
-    constructor(private sql: SqlExecutor) {}
+    private sql!: SqlExecutor;  // Assigned in constructor
+    public promises!: this;  // Set in init(), required by isomorphic-git
+    
+    constructor(sql: SqlExecutor) {
+        this.sql = sql;
+    }
     
     /**
      * Get storage statistics for observability
      */
     getStorageStats(): { totalObjects: number; totalBytes: number; largestObject: { path: string; size: number } | null } {
-        const objects = this.sql<{ path: string; data: string }>`SELECT path, data FROM git_objects`;
+        const objects = this.sql<{ path: string; data: string; is_dir: number }>`SELECT path, data, is_dir FROM git_objects WHERE is_dir = 0`;
         
         if (!objects || objects.length === 0) {
             return { totalObjects: 0, totalBytes: 0, largestObject: null };
@@ -47,40 +52,83 @@ export class SqliteFS {
         };
     }
 
-    init(): void {
+    init() {
+        // Create table
         this.sql`
             CREATE TABLE IF NOT EXISTS git_objects (
                 path TEXT PRIMARY KEY,
                 data TEXT NOT NULL,
+                is_dir INTEGER NOT NULL DEFAULT 0,
                 mtime INTEGER NOT NULL
             )
         `;
         
-        // Create index for efficient directory listings
+        // Create indexes for efficient lookups
         this.sql`CREATE INDEX IF NOT EXISTS idx_git_objects_path ON git_objects(path)`;
+        this.sql`CREATE INDEX IF NOT EXISTS idx_git_objects_is_dir ON git_objects(is_dir, path)`;
+        
+        // Ensure root directory exists
+        this.sql`INSERT OR IGNORE INTO git_objects (path, data, is_dir, mtime) VALUES ('', '', 1, ${Date.now()})`;
+        
+        // Make promises property enumerable for isomorphic-git FileSystem detection
+        Object.defineProperty(this, 'promises', {
+            value: this,
+            enumerable: true,
+            writable: false,
+            configurable: false
+        });
     }
 
-    readFile(path: string, options?: { encoding?: 'utf8' }): Uint8Array | string {
+    async readFile(path: string, options?: { encoding?: 'utf8' }): Promise<Uint8Array | string> {
         // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
-        const result = this.sql<{ data: string }>`SELECT data FROM git_objects WHERE path = ${normalized}`;
-        if (!result[0]) throw new Error(`ENOENT: ${path}`);
+        console.log(`[Git FS] readFile: ${normalized} (encoding: ${options?.encoding || 'binary'}) - START`);
+        const result = this.sql<{ data: string; is_dir: number }>`SELECT data, is_dir FROM git_objects WHERE path = ${normalized}`;
+        if (!result[0]) {
+            console.log(`[Git FS] readFile: ${normalized} - ENOENT`);
+            const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, open '${path}'`);
+            error.code = 'ENOENT';
+            error.errno = -2;
+            error.path = path;
+            throw error;
+        }
+        
+        // Check if it's a directory (directories can't be read as files)
+        if (result[0].is_dir) {
+            const error: NodeJS.ErrnoException = new Error(`EISDIR: illegal operation on a directory, read '${path}'`);
+            error.code = 'EISDIR';
+            error.errno = -21;
+            error.path = path;
+            throw error;
+        }
         
         const base64Data = result[0].data;
         
-        // Decode from base64
+        // Decode from base64 - handle empty files
+        if (!base64Data) {
+            console.log(`[Git FS] readFile: ${normalized} -> empty file`);
+            return options?.encoding === 'utf8' ? '' : new Uint8Array(0);
+        }
+        
         const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
         
-        return options?.encoding === 'utf8' ? new TextDecoder().decode(bytes) : bytes;
+        const fileContent = options?.encoding === 'utf8' ? new TextDecoder().decode(bytes) : bytes;
+        console.log(`[Git FS] readFile: ${normalized} -> ${bytes.length} bytes - COMPLETE`);
+        return fileContent;
     }
 
-    writeFile(path: string, data: Uint8Array | string): void {
+    async writeFile(path: string, data: Uint8Array | string): Promise<void> {
         // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
+        console.log(`[Git FS] writeFile: ${normalized} - START`);
+        
+        if (!normalized) {
+            throw new Error('Cannot write to root');
+        }
         
         // Convert to Uint8Array if string
         const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
@@ -90,83 +138,274 @@ export class SqliteFS {
             throw new Error(`File too large: ${path} (${bytes.length} bytes, max ${MAX_OBJECT_SIZE})`);
         }
         
-        // Encode to base64 for safe storage
-        let binaryString = '';
-        for (let i = 0; i < bytes.length; i++) {
-            binaryString += String.fromCharCode(bytes[i]);
+        // Check if path exists as directory
+        const existing = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
+        if (existing[0]?.is_dir === 1) {
+            const error: NodeJS.ErrnoException = new Error(`EISDIR: illegal operation on a directory, open '${path}'`);
+            error.code = 'EISDIR';
+            error.errno = -21;
+            error.path = path;
+            throw error;
         }
-        const base64Content = btoa(binaryString);
         
-        this.sql`INSERT OR REPLACE INTO git_objects (path, data, mtime) VALUES (${normalized}, ${base64Content}, ${Date.now()})`;
-        
-        // Only log if approaching size limit (no overhead for normal files)
-        if (bytes.length > MAX_OBJECT_SIZE * 0.8) {
-            console.warn(`[Git Storage] Large file: ${normalized} is ${(bytes.length / 1024).toFixed(1)}KB (limit: ${(MAX_OBJECT_SIZE / 1024).toFixed(1)}KB)`);
+        // Ensure parent directories exist (git implicitly creates them)
+        const parts = normalized.split('/');
+        if (parts.length > 1) {
+            const now = Date.now();
+            for (let i = 0; i < parts.length - 1; i++) {
+                const dirPath = parts.slice(0, i + 1).join('/');
+                this.sql`INSERT OR IGNORE INTO git_objects (path, data, is_dir, mtime) VALUES (${dirPath}, '', 1, ${now})`;
+            }
         }
+        
+        // Encode to base64 for safe storage (handle empty files)
+        const base64Content = bytes.length === 0 ? '' : btoa(String.fromCharCode(...Array.from(bytes)));
+        
+        this.sql`INSERT OR REPLACE INTO git_objects (path, data, is_dir, mtime) VALUES (${normalized}, ${base64Content}, 0, ${Date.now()})`;
+        console.log(`[Git FS] writeFile: ${normalized} -> ${bytes.length} bytes written - COMPLETE`);
     }
 
-    unlink(path: string): void {
+    async unlink(path: string): Promise<void> {
         // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
-        this.sql`DELETE FROM git_objects WHERE path = ${normalized}`;
-    }
-
-    readdir(path: string): string[] {
-        // Normalize path (remove leading/trailing slashes)
-        const normalized = path.replace(/^\/+|\/+$/g, '');
+        console.log(`[Git FS] unlink: ${normalized} - START`);
         
-        let result;
-        if (normalized === '') {
-            // Root directory - get all paths
-            result = this.sql<{ path: string }>`SELECT path FROM git_objects`;
-        } else {
-            // Subdirectory - match prefix
-            result = this.sql<{ path: string }>`SELECT path FROM git_objects WHERE path LIKE ${normalized + '/%'}`;
+        // Check if exists and is not a directory
+        const existing = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
+        if (!existing[0]) {
+            const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, unlink '${path}'`);
+            error.code = 'ENOENT';
+            error.errno = -2;
+            error.path = path;
+            throw error;
+        }
+        if (existing[0].is_dir === 1) {
+            const error: NodeJS.ErrnoException = new Error(`EPERM: operation not permitted, unlink '${path}'`);
+            error.code = 'EPERM';
+            error.errno = -1;
+            error.path = path;
+            throw error;
         }
         
-        if (!result || result.length === 0) return [];
+        this.sql`DELETE FROM git_objects WHERE path = ${normalized} AND is_dir = 0`;
+        console.log(`[Git FS] unlink: ${normalized} -> deleted - COMPLETE`);
+    }
+
+    async readdir(path: string): Promise<string[]> {
+        // Normalize path (remove leading/trailing slashes)
+        const normalized = path.replace(/^\/+|\/+$/g, '');
+        console.log(`[Git FS] readdir: ${normalized} - START`);
+        
+        // Check if directory exists
+        const dirCheck = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
+        if (!dirCheck[0] || !dirCheck[0].is_dir) {
+            const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, scandir '${path}'`);
+            error.code = 'ENOENT';
+            error.errno = -2;
+            error.path = path;
+            throw error;
+        }
+        
+        let rows;
+        if (normalized === '') {
+            // Root directory - get all direct children
+            rows = this.sql<{ path: string }>`SELECT path FROM git_objects WHERE path != '' AND path NOT LIKE '%/%'`;
+        } else {
+            // Subdirectory - get direct children only
+            rows = this.sql<{ path: string }>`SELECT path FROM git_objects WHERE path LIKE ${normalized + '/%'}`;
+        }
+        
+        if (!rows || rows.length === 0) return [];
 
         const children = new Set<string>();
         const prefixLen = normalized ? normalized.length + 1 : 0;
         
-        for (const row of result) {
+        for (const row of rows) {
             const relativePath = normalized ? row.path.substring(prefixLen) : row.path;
             const first = relativePath.split('/')[0];
             if (first) children.add(first);
         }
 
-        return Array.from(children);
+        const result = Array.from(children);
+        console.log(`[Git FS] readdir: ${normalized} -> [${result.join(', ')}] (${result.length} entries) - COMPLETE`);
+        return result;
     }
 
-    mkdir(_path: string): void {
-        // No-op: directories are implicit in Git
-    }
-
-    rmdir(path: string): void {
+    async mkdir(path: string, _options?: { recursive?: boolean }): Promise<void> {
         // Normalize path (remove leading/trailing slashes)
         const normalized = path.replace(/^\/+|\/+$/g, '');
-        this.sql`DELETE FROM git_objects WHERE path LIKE ${normalized + '%'}`;
+        
+        // Don't create root (already exists)
+        if (!normalized) return;
+        
+        console.log(`[Git FS] mkdir: ${normalized} - START`);
+        
+        // Quick check: if parent is root, we can skip parent validation
+        const parts = normalized.split('/');
+        const isDirectChildOfRoot = parts.length === 1;
+        
+        if (!isDirectChildOfRoot) {
+            // Check parent exists first (avoid unnecessary queries)
+            const parentPath = parts.slice(0, -1).join('/');
+            const parent = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${parentPath}`;
+            if (!parent[0] || parent[0].is_dir !== 1) {
+                // Parent doesn't exist - throw ENOENT
+                // Isomorphic-git's FileSystem wrapper will catch this and recursively create parent
+                const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, mkdir '${path}'`);
+                error.code = 'ENOENT';
+                error.errno = -2;
+                error.path = path;
+                throw error;
+            }
+        }
+        
+        // Check if already exists (after parent check to fail fast on missing parent)
+        const existing = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
+        if (existing[0]) {
+            if (existing[0].is_dir === 1) {
+                // Already exists as directory - this is OK (idempotent)
+                console.log(`[Git FS] mkdir: ${normalized} already exists - COMPLETE`);
+                return;
+            } else {
+                // Exists as file - can't create directory
+                const error: NodeJS.ErrnoException = new Error(`EEXIST: file already exists, mkdir '${path}'`);
+                error.code = 'EEXIST';
+                error.errno = -17;
+                error.path = path;
+                throw error;
+            }
+        }
+        
+        // Create directory entry
+        this.sql`INSERT OR IGNORE INTO git_objects (path, data, is_dir, mtime) VALUES (${normalized}, '', 1, ${Date.now()})`;
+        console.log(`[Git FS] mkdir: ${normalized} created - COMPLETE`);
     }
 
-    stat(path: string): { type: 'file' | 'dir'; mode: number; size: number; mtimeMs: number } {
+    async rmdir(path: string): Promise<void> {
+        // Normalize path (remove leading/trailing slashes)
+        const normalized = path.replace(/^\/+|\/+$/g, '');
+        console.log(`[Git FS] rmdir: ${normalized} - START`);
+        
+        if (!normalized) {
+            throw new Error('Cannot remove root directory');
+        }
+        
+        // Check if exists and is a directory
+        const existing = this.sql<{ is_dir: number }>`SELECT is_dir FROM git_objects WHERE path = ${normalized}`;
+        if (!existing[0]) {
+            const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, rmdir '${path}'`);
+            error.code = 'ENOENT';
+            error.errno = -2;
+            error.path = path;
+            throw error;
+        }
+        if (existing[0].is_dir !== 1) {
+            const error: NodeJS.ErrnoException = new Error(`ENOTDIR: not a directory, rmdir '${path}'`);
+            error.code = 'ENOTDIR';
+            error.errno = -20;
+            error.path = path;
+            throw error;
+        }
+        
+        // Check if directory is empty (has no children)
+        const children = this.sql<{ path: string }>`SELECT path FROM git_objects WHERE path LIKE ${normalized + '/%'} LIMIT 1`;
+        if (children.length > 0) {
+            const error: NodeJS.ErrnoException = new Error(`ENOTEMPTY: directory not empty, rmdir '${path}'`);
+            error.code = 'ENOTEMPTY';
+            error.errno = -39;
+            error.path = path;
+            throw error;
+        }
+        
+        // Remove the directory
+        this.sql`DELETE FROM git_objects WHERE path = ${normalized}`;
+        console.log(`[Git FS] rmdir: ${normalized} -> deleted - COMPLETE`);
+    }
+
+    async stat(path: string): Promise<{ type: 'file' | 'dir'; mode: number; size: number; mtimeMs: number }> {
         // Normalize path (remove leading slashes)
         const normalized = path.replace(/^\/+/, '');
-        const result = this.sql<{ data: string; mtime: number }>`SELECT data, mtime FROM git_objects WHERE path = ${normalized}`;
-        if (!result[0]) throw new Error(`ENOENT: ${path}`);
+        console.log(`[Git FS] stat: ${normalized} - START`);
+        const result = this.sql<{ data: string; mtime: number; is_dir: number }>`SELECT data, mtime, is_dir FROM git_objects WHERE path = ${normalized}`;
+        if (!result[0]) {
+            const error: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, stat '${path}'`);
+            error.code = 'ENOENT';
+            error.errno = -2;
+            error.path = path;
+            throw error;
+        }
         
         const row = result[0];
-        return { type: 'file', mode: 0o100644, size: row.data.length, mtimeMs: row.mtime };
+        const isDir = row.is_dir === 1;
+        
+        // Calculate actual size for files (base64 is ~1.33x larger than binary)
+        let size = 0;
+        if (!isDir && row.data) {
+            // Approximate binary size from base64 length
+            size = Math.floor(row.data.length * 0.75);
+        }
+        
+        const statResult = {
+            type: (isDir ? 'dir' : 'file') as 'file' | 'dir',
+            mode: isDir ? 0o040755 : 0o100644,
+            size,
+            mtimeMs: row.mtime,
+            // Add full Node.js stat properties for isomorphic-git
+            dev: 0,
+            ino: 0,
+            uid: 0,
+            gid: 0,
+            ctime: new Date(row.mtime),
+            mtime: new Date(row.mtime),
+            ctimeMs: row.mtime,
+            // Add methods that isomorphic-git expects
+            isFile: () => !isDir,
+            isDirectory: () => isDir,
+            isSymbolicLink: () => false,  // We don't support symlinks yet
+        };
+        console.log(`[Git FS] stat: ${normalized} -> ${statResult.type} (${statResult.size} bytes) - COMPLETE`);
+        return statResult;
     }
 
-    lstat(path: string) {
-        return this.stat(path);
+    async lstat(path: string) {
+        console.log(`[Git FS] lstat: ${path} (delegating to stat)`);
+        return await this.stat(path);
     }
 
-    symlink(target: string, path: string): void {
-        this.writeFile(path, target);
+    async symlink(target: string, path: string): Promise<void> {
+        console.log(`[Git FS] symlink: ${path} -> ${target}`);
+        await this.writeFile(path, target);
     }
 
-    readlink(path: string): string {
-        return this.readFile(path, { encoding: 'utf8' }) as string;
+    async readlink(path: string): Promise<string> {
+        console.log(`[Git FS] readlink: ${path}`);
+        return (await this.readFile(path, { encoding: 'utf8' })) as string;
+    }
+
+    /**
+     * Check if a file or directory exists
+     * Required by isomorphic-git's init check
+     */
+    async exists(path: string): Promise<boolean> {
+        console.log(`[Git FS] exists: ${path}`);
+        try {
+            await this.stat(path);
+            console.log(`[Git FS] exists: ${path} -> true`);
+            return true;
+        } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                console.log(`[Git FS] exists: ${path} -> false`);
+                return false;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Alias for writeFile (isomorphic-git sometimes uses 'write')
+     */
+    async write(path: string, data: Uint8Array | string): Promise<void> {
+        console.log(`[Git FS] write: ${path}`);
+        return await this.writeFile(path, data);
     }
 }

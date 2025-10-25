@@ -116,12 +116,4 @@ export class CodingAgentInterface {
     ): Promise<DeepDebugResult> {
         return this.agentStub.executeDeepDebug(issue, toolRenderer, streamCb, focusPaths);
     }
-
-    handleGitInfoRefs(): Promise<string> {
-        return this.agentStub.handleGitInfoRefs();
-    }
-
-    handleGitUploadPack(): Promise<Uint8Array> {
-        return this.agentStub.handleGitUploadPack();
-    }
 }

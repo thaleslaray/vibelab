@@ -215,10 +215,13 @@ export class AppViewController extends BaseController {
         context: RouteContext
     ): Promise<Response> {
         try {
-            const appId = context.pathParams.id;
-            if (!appId) {
+            this.logger.info('Handling git info/refs request');
+            // Strip .git suffix from the captured ID (e.g., "abc123.git" -> "abc123")
+            const appIdWithGit = context.pathParams.id;
+            if (!appIdWithGit) {
                 return new Response('App ID is required', { status: 400 });
             }
+            const appId = appIdWithGit.replace(/\.git$/, '');
 
             // Check access
             const hasAccess = await this.verifyGitAccess(request, env, appId);
@@ -259,10 +262,12 @@ export class AppViewController extends BaseController {
         context: RouteContext
     ): Promise<Response> {
         try {
-            const appId = context.pathParams.id;
-            if (!appId) {
+            // Strip .git suffix from the captured ID (e.g., "abc123.git" -> "abc123")
+            const appIdWithGit = context.pathParams.id;
+            if (!appIdWithGit) {
                 return new Response('App ID is required', { status: 400 });
             }
+            const appId = appIdWithGit.replace(/\.git$/, '');
 
             // Check access
             const hasAccess = await this.verifyGitAccess(request, env, appId);
