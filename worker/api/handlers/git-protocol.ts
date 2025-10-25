@@ -2,9 +2,12 @@
  * Git Protocol Handler
  * Handles git clone/fetch operations via HTTP protocol
  * Route: /apps/:id.git/info/refs and /apps/:id.git/git-upload-pack
+ * 
+ * Architecture: Export git objects from DO, build repo in worker to save DO memory
  */
 import { getAgentStub } from '../../agents';
 import { createLogger } from '../../logger';
+import { GitCloneService } from '../../agents/git/git-clone-service';
 
 const logger = createLogger('GitProtocol');
 
@@ -44,7 +47,29 @@ async function handleInfoRefs(env: Env, appId: string): Promise<Response> {
             return new Response('Repository not found', { status: 404 });
         }
         
-        const response = await agentStub.handleGitInfoRefs();
+        // Export git objects from DO
+        const { gitObjects, query, hasCommits, templateDetails } = await agentStub.exportGitObjects();
+        
+        if (!hasCommits) {
+            // Return empty advertisement for repos with no commits
+            return new Response('001e# service=git-upload-pack\n0000', {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/x-git-upload-pack-advertisement',
+                    'Cache-Control': 'no-cache'
+                }
+            });
+        }
+        
+        // Build repository in worker
+        const repoFS = await GitCloneService.buildRepository({
+            gitObjects,
+            templateDetails,
+            appQuery: query
+        });
+        
+        // Generate info/refs response
+        const response = await GitCloneService.handleInfoRefs(repoFS);
         return new Response(response, {
             status: 200,
             headers: {
@@ -68,7 +93,22 @@ async function handleUploadPack(env: Env, appId: string): Promise<Response> {
             return new Response('Repository not found', { status: 404 });
         }
         
-        const packfile = await agentStub.handleGitUploadPack();
+        // Export git objects from DO
+        const { gitObjects, query, hasCommits, templateDetails } = await agentStub.exportGitObjects();
+        
+        if (!hasCommits) {
+            return new Response('No commits to pack', { status: 404 });
+        }
+        
+        // Build repository in worker
+        const repoFS = await GitCloneService.buildRepository({
+            gitObjects,
+            templateDetails,
+            appQuery: query
+        });
+        
+        // Generate packfile with full commit history
+        const packfile = await GitCloneService.handleUploadPack(repoFS);
         return new Response(packfile, {
             status: 200,
             headers: {

@@ -5,14 +5,13 @@
 
 import git from '@ashishkumar472/cf-git';
 import { MemFS } from './memfs';
-import { SqliteFS } from './fs-adapter';
 import { createLogger } from '../../logger';
 import type { TemplateDetails as SandboxTemplateDetails } from '../../services/sandbox/sandboxTypes';
 
 const logger = createLogger('GitCloneService');
 
 export interface RepositoryBuildOptions {
-    agentGitFS: SqliteFS;
+    gitObjects: Array<{ path: string; data: Uint8Array }>;
     templateDetails: SandboxTemplateDetails | null | undefined;
     appQuery: string;
 }
@@ -23,20 +22,20 @@ export class GitCloneService {
      * 
      * Strategy:
      * 1. Create base commit with template files
-     * 2. Export all git objects from agent's repo (SqliteFS)
-     * 3. Import git objects into MemFS
-     * 4. Update refs to point to agent's commits
+     * 2. Import exported git objects from agent
+     * 3. Update refs to point to agent's commits
      * 
      * Result: Template base + agent's commit history on top
      */
     static async buildRepository(options: RepositoryBuildOptions): Promise<MemFS> {
-        const { agentGitFS, templateDetails, appQuery } = options;
+        const { gitObjects, templateDetails, appQuery } = options;
         const fs = new MemFS();
         
         try {
             logger.info('Building git repository with template rebasing', { 
                 templateName: templateDetails?.name,
-                templateFileCount: templateDetails ? Object.keys(templateDetails.allFiles).length : 0
+                templateFileCount: templateDetails ? Object.keys(templateDetails.allFiles).length : 0,
+                gitObjectCount: gitObjects.length
             });
             
             // Step 1: Create base commit with template files
@@ -55,8 +54,8 @@ export class GitCloneService {
                     dir: '/',
                     message: `Template: ${templateDetails.name}\n\nBase template for Vibesdk application\nQuery: ${appQuery}`,
                     author: {
-                        name: 'Vibesdk Template',
-                        email: 'templates@cloudflare.dev',
+                        name: 'Vibesdk Agent',
+                        email: 'vibesdk-bot@cloudflare.dev',
                         timestamp: Math.floor(Date.now() / 1000)
                     }
                 });
@@ -64,19 +63,20 @@ export class GitCloneService {
                 logger.info('Created template base commit', { oid: templateCommitOid });
             }
             
-            // Step 2: Check if agent has git history
-            const agentHasGitRepo = await this.hasGitRepository(agentGitFS);
-            
-            if (agentHasGitRepo) {
-                // Step 3: Export all git objects from agent's repo and import to MemFS
-                await this.copyGitObjects(agentGitFS, fs);
+            // Step 2: Import exported git objects from agent
+            if (gitObjects.length > 0) {
+                logger.info('Importing git objects from agent', { count: gitObjects.length });
                 
-                // Step 4: Get agent's HEAD
+                for (const obj of gitObjects) {
+                    fs.writeFile(obj.path, obj.data);
+                }
+                
+                // Step 3: Get agent's HEAD and update main branch
                 try {
-                    const agentHeadOid = await git.resolveRef({ fs: agentGitFS, dir: '/', ref: 'HEAD' });
+                    const agentHeadOid = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
                     
                     // Update main branch to point to agent's HEAD
-                    // This effectively rebases agent's commits on top of template
+                    // This rebases agent's commits on top of template
                     await git.writeRef({
                         fs,
                         dir: '/',
@@ -104,63 +104,6 @@ export class GitCloneService {
         }
     }
 
-    /**
-     * Check if agent has initialized git repository
-     */
-    private static async hasGitRepository(agentFS: SqliteFS): Promise<boolean> {
-        try {
-            agentFS.readdir('/.git');
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    /**
-     * Copy all git objects from agent's SqliteFS to MemFS
-     * This includes commits, trees, and blobs
-     */
-    private static async copyGitObjects(sourceFS: SqliteFS, targetFS: MemFS): Promise<void> {
-        try {
-            // Copy the entire .git directory structure
-            await this.copyDirectory(sourceFS, targetFS, '/.git');
-            logger.info('Copied git objects from agent to MemFS');
-        } catch (error) {
-            logger.error('Failed to copy git objects', { error });
-            throw error;
-        }
-    }
-
-    /**
-     * Recursively copy directory from source to target filesystem
-     */
-    private static async copyDirectory(
-        sourceFS: SqliteFS,
-        targetFS: MemFS,
-        dirPath: string
-    ): Promise<void> {
-        const entries = await sourceFS.readdir(dirPath);
-        
-        for (const entry of entries) {
-            const fullPath = `${dirPath}/${entry}`;
-            
-            try {
-                const stat = await sourceFS.stat(fullPath);
-                
-                if (stat.type === 'file') {
-                    // Copy file
-                    const data = await sourceFS.readFile(fullPath);
-                    targetFS.writeFile(fullPath, data as Uint8Array);
-                } else if (stat.type === 'dir') {
-                    // Recursively copy directory
-                    await this.copyDirectory(sourceFS, targetFS, fullPath);
-                }
-            } catch (error) {
-                logger.warn(`Failed to copy ${fullPath}`, { error });
-                // Continue with other files
-            }
-        }
-    }
 
     /**
      * Handle git info/refs request
@@ -200,36 +143,51 @@ export class GitCloneService {
      */
     static async handleUploadPack(fs: MemFS): Promise<Uint8Array> {
         try {
-            // For initial implementation, send all objects
-            // Future optimization: parse client wants from request body
             const head = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
+            const objects = new Set<string>();
             
-            // Walk the commit tree to get all objects
-            const { commit } = await git.readCommit({ fs, dir: '/', oid: head });
-            const objects = [head, commit.tree];
+            const walkCommits = async (oid: string): Promise<void> => {
+                if (objects.has(oid)) return; // Already visited
+                objects.add(oid);
+                
+                const { commit } = await git.readCommit({ fs, dir: '/', oid });
+                objects.add(commit.tree);
+                
+                // Recursively collect all tree and blob objects from this commit
+                await collectTreeObjects(commit.tree);
+                
+                // Walk parent commits recursively
+                for (const parentOid of commit.parent) {
+                    await walkCommits(parentOid);
+                }
+            };
             
             // Recursively collect all tree and blob objects
             const collectTreeObjects = async (treeOid: string): Promise<void> => {
-                objects.push(treeOid);
+                if (objects.has(treeOid)) return;
+                objects.add(treeOid);
+                
                 const { tree } = await git.readTree({ fs, dir: '/', oid: treeOid });
                 
                 for (const entry of tree) {
-                    objects.push(entry.oid);
+                    objects.add(entry.oid);
                     if (entry.type === 'tree') {
                         await collectTreeObjects(entry.oid);
                     }
                 }
             };
             
-            await collectTreeObjects(commit.tree);
+            await walkCommits(head);
             
-            logger.info('Generating packfile', { objectCount: objects.length });
+            logger.info('Generating packfile with full commit history', { 
+                objectCount: objects.size 
+            });
             
             // Create packfile with all objects
             const packResult = await git.packObjects({ 
                 fs, 
                 dir: '/', 
-                oids: objects
+                oids: Array.from(objects)
             });
             
             // packObjects returns { packfile: Uint8Array }

@@ -57,6 +57,7 @@ export class SqliteFS {
         this.sql`
             CREATE TABLE IF NOT EXISTS git_objects (
                 path TEXT PRIMARY KEY,
+                parent_path TEXT NOT NULL DEFAULT '',
                 data TEXT NOT NULL,
                 is_dir INTEGER NOT NULL DEFAULT 0,
                 mtime INTEGER NOT NULL
@@ -64,11 +65,11 @@ export class SqliteFS {
         `;
         
         // Create indexes for efficient lookups
-        this.sql`CREATE INDEX IF NOT EXISTS idx_git_objects_path ON git_objects(path)`;
+        this.sql`CREATE INDEX IF NOT EXISTS idx_git_objects_parent ON git_objects(parent_path, path)`;
         this.sql`CREATE INDEX IF NOT EXISTS idx_git_objects_is_dir ON git_objects(is_dir, path)`;
         
         // Ensure root directory exists
-        this.sql`INSERT OR IGNORE INTO git_objects (path, data, is_dir, mtime) VALUES ('', '', 1, ${Date.now()})`;
+        this.sql`INSERT OR IGNORE INTO git_objects (path, parent_path, data, is_dir, mtime) VALUES ('', '', '', 1, ${Date.now()})`;
         
         // Make promises property enumerable for isomorphic-git FileSystem detection
         Object.defineProperty(this, 'promises', {
@@ -150,18 +151,28 @@ export class SqliteFS {
         
         // Ensure parent directories exist (git implicitly creates them)
         const parts = normalized.split('/');
+        const parentPath = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+        
         if (parts.length > 1) {
             const now = Date.now();
             for (let i = 0; i < parts.length - 1; i++) {
                 const dirPath = parts.slice(0, i + 1).join('/');
-                this.sql`INSERT OR IGNORE INTO git_objects (path, data, is_dir, mtime) VALUES (${dirPath}, '', 1, ${now})`;
+                const dirParent = i === 0 ? '' : parts.slice(0, i).join('/');
+                this.sql`INSERT OR IGNORE INTO git_objects (path, parent_path, data, is_dir, mtime) VALUES (${dirPath}, ${dirParent}, '', 1, ${now})`;
             }
         }
         
-        // Encode to base64 for safe storage (handle empty files)
-        const base64Content = bytes.length === 0 ? '' : btoa(String.fromCharCode(...Array.from(bytes)));
+        // Encode to base64 for safe storage
+        let base64Content = '';
+        if (bytes.length > 0) {
+            let binaryString = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binaryString += String.fromCharCode(bytes[i]);
+            }
+            base64Content = btoa(binaryString);
+        }
         
-        this.sql`INSERT OR REPLACE INTO git_objects (path, data, is_dir, mtime) VALUES (${normalized}, ${base64Content}, 0, ${Date.now()})`;
+        this.sql`INSERT OR REPLACE INTO git_objects (path, parent_path, data, is_dir, mtime) VALUES (${normalized}, ${parentPath}, ${base64Content}, 0, ${Date.now()})`;
         console.log(`[Git FS] writeFile: ${normalized} -> ${bytes.length} bytes written - COMPLETE`);
     }
 
@@ -206,29 +217,18 @@ export class SqliteFS {
             throw error;
         }
         
-        let rows;
-        if (normalized === '') {
-            // Root directory - get all direct children
-            rows = this.sql<{ path: string }>`SELECT path FROM git_objects WHERE path != '' AND path NOT LIKE '%/%'`;
-        } else {
-            // Subdirectory - get direct children only
-            rows = this.sql<{ path: string }>`SELECT path FROM git_objects WHERE path LIKE ${normalized + '/%'}`;
-        }
+        const rows = this.sql<{ path: string }>`SELECT path FROM git_objects WHERE parent_path = ${normalized}`;
         
         if (!rows || rows.length === 0) return [];
 
-        const children = new Set<string>();
-        const prefixLen = normalized ? normalized.length + 1 : 0;
-        
-        for (const row of rows) {
-            const relativePath = normalized ? row.path.substring(prefixLen) : row.path;
-            const first = relativePath.split('/')[0];
-            if (first) children.add(first);
-        }
+        // Extract just the basename from each path
+        const children = rows.map(row => {
+            const parts = row.path.split('/');
+            return parts[parts.length - 1];
+        });
 
-        const result = Array.from(children);
-        console.log(`[Git FS] readdir: ${normalized} -> [${result.join(', ')}] (${result.length} entries) - COMPLETE`);
-        return result;
+        console.log(`[Git FS] readdir: ${normalized} -> [${children.join(', ')}] (${children.length} entries) - COMPLETE`);
+        return children;
     }
 
     async mkdir(path: string, _options?: { recursive?: boolean }): Promise<void> {
@@ -276,8 +276,9 @@ export class SqliteFS {
             }
         }
         
-        // Create directory entry
-        this.sql`INSERT OR IGNORE INTO git_objects (path, data, is_dir, mtime) VALUES (${normalized}, '', 1, ${Date.now()})`;
+        // Create directory entry (reuse parts from earlier)
+        const parentPath = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+        this.sql`INSERT OR IGNORE INTO git_objects (path, parent_path, data, is_dir, mtime) VALUES (${normalized}, ${parentPath}, '', 1, ${Date.now()})`;
         console.log(`[Git FS] mkdir: ${normalized} created - COMPLETE`);
     }
 
@@ -407,5 +408,37 @@ export class SqliteFS {
     async write(path: string, data: Uint8Array | string): Promise<void> {
         console.log(`[Git FS] write: ${path}`);
         return await this.writeFile(path, data);
+    }
+
+    /**
+     * Export all git objects for cloning
+     * Returns array of {path, data}
+     */
+    exportGitObjects(): Array<{ path: string; data: Uint8Array }> {
+        console.log('[Git FS] Exporting git objects...');
+        const objects = this.sql<{ path: string; data: string; is_dir: number }>`
+            SELECT path, data, is_dir FROM git_objects WHERE path LIKE '.git/%'
+        `;
+        
+        const exported: Array<{ path: string; data: Uint8Array }> = [];
+        
+        for (const obj of objects) {
+            if (obj.is_dir === 1) continue; // Skip directories, only export files
+            
+            // Decode base64 to binary
+            const binaryString = atob(obj.data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            exported.push({
+                path: '/' + obj.path, // Add leading slash for consistency
+                data: bytes
+            });
+        }
+        
+        console.log(`[Git FS] Exported ${exported.length} git objects`);
+        return exported;
     }
 }
