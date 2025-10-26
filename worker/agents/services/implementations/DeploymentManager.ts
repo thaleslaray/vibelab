@@ -356,6 +356,8 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 // Success! Start health check and return
                 if (result.redeployed || this.healthCheckInterval === null) {
                     this.startHealthCheckInterval(result.sandboxInstanceId);
+                    // Execute setup commands
+                    await this.executeSetupCommands(result.sandboxInstanceId);
                 }
 
                 const preview = {
