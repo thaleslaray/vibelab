@@ -57,7 +57,7 @@ export class AppViewController extends BaseController {
             let previewUrl: string = '';
             
             try {
-                const agentStub = await getAgentStub(env, appResult.id, true, this.logger);
+                const agentStub = await getAgentStub(env, appResult.id);
                 agentSummary = await agentStub.getSummary();
 
                 previewUrl = await agentStub.getPreviewUrlCache();

@@ -81,7 +81,7 @@ export class CodingAgentController extends BaseController {
             // Fetch all user model configs, api keys and agent instance at once
             const [userConfigsRecord, agentInstance] = await Promise.all([
                 modelConfigService.getUserModelConfigs(user.id),
-                getAgentStub(env, agentId, false, this.logger)
+                getAgentStub(env, agentId)
             ]);
                                 
             // Convert Record to Map and extract only ModelConfig properties
@@ -219,7 +219,7 @@ export class CodingAgentController extends BaseController {
 
             try {
                 // Get the agent instance to handle the WebSocket connection
-                const agentInstance = await getAgentStub(env, chatId, true, this.logger);
+                const agentInstance = await getAgentStub(env, chatId);
                 
                 this.logger.info(`Successfully got agent instance for chat: ${chatId}`);
 
@@ -270,7 +270,7 @@ export class CodingAgentController extends BaseController {
 
             try {
                 // Verify the agent instance exists
-                const agentInstance = await getAgentStub(env, agentId, true, this.logger);
+                const agentInstance = await getAgentStub(env, agentId);
                 if (!agentInstance || !(await agentInstance.isInitialized())) {
                     return CodingAgentController.createErrorResponse<AgentConnectionData>('Agent instance not found or not initialized', 404);
                 }
@@ -312,7 +312,7 @@ export class CodingAgentController extends BaseController {
 
             try {
                 // Get the agent instance
-                const agentInstance = await getAgentStub(env, agentId, true, this.logger);
+                const agentInstance = await getAgentStub(env, agentId);
                 
                 // Deploy the preview
                 const preview = await agentInstance.deployToSandbox();

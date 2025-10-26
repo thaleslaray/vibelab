@@ -114,7 +114,7 @@ export class GitHubExporterController extends BaseController {
             // Push files to repository
             this.logger.info('Pushing files to repository', { agentId, repositoryUrl });
             
-            const agentStub = await getAgentStub(env, agentId, true, this.logger);
+            const agentStub = await getAgentStub(env, agentId);
             const pushResult = await agentStub.pushToGitHub({
                 cloneUrl,
                 repositoryHtmlUrl: repositoryUrl,
@@ -283,7 +283,7 @@ export class GitHubExporterController extends BaseController {
                 );
             }
 
-            const agentStub = await getAgentStub(env, body.agentId, true, this.logger);
+            const agentStub = await getAgentStub(env, body.agentId);
             const cachedToken = await agentStub.getGitHubToken();
             
             if (cachedToken) {
@@ -401,7 +401,7 @@ export class GitHubExporterController extends BaseController {
                 );
             }
 
-            const agentStub = await getAgentStub(env, body.agentId, true, this.logger);
+            const agentStub = await getAgentStub(env, body.agentId);
             
             // Try to get cached token
             const cachedToken = await agentStub.getGitHubToken();

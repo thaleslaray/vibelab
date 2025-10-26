@@ -128,7 +128,7 @@ async function handleInfoRefs(
             return new Response('Repository not found', { status: 404 });
         }
         
-        const agentStub = await getAgentStub(env, appId, true, logger);
+        const agentStub = await getAgentStub(env, appId);
         if (!agentStub || !(await agentStub.isInitialized())) {
             return new Response('Repository not found', { status: 404 });
         }
@@ -220,7 +220,7 @@ async function handleUploadPack(
             return new Response('Repository not found', { status: 404 });
         }
         
-        const agentStub = await getAgentStub(env, appId, true, logger);
+        const agentStub = await getAgentStub(env, appId);
         if (!agentStub || !(await agentStub.isInitialized())) {
             return new Response('Repository not found', { status: 404 });
         }
