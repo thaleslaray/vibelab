@@ -130,8 +130,8 @@
             "custom_domain": true
         },
         {
-            "pattern": "*.vibelab.escoladeautomacao.com.br/*",
-            "zone_name": "escoladeautomacao.com.br"
+            "pattern": "*.escoladeautomacao.com/*",
+            "zone_name": "escoladeautomacao.com"
         }
     ],
 	"vars": {
@@ -141,6 +141,7 @@
         "ENABLE_READ_REPLICAS": "true",
         "CLOUDFLARE_AI_GATEWAY": "vibesdk-gateway",
         "CUSTOM_DOMAIN": "vibelab.escoladeautomacao.com.br",
+        "CUSTOM_PREVIEW_DOMAIN": "escoladeautomacao.com",
         "MAX_SANDBOX_INSTANCES": "10",
         "SANDBOX_INSTANCE_TYPE": "standard-3",
         "USE_CLOUDFLARE_IMAGES": false
