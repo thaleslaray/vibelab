@@ -913,20 +913,6 @@ export class SandboxSdkClient extends BaseSandboxService {
                         if (previewDomain) {
                             // Replace CUSTOM_DOMAIN with previewDomain in previewURL
                             previewURL = previewURL.replace(env.CUSTOM_DOMAIN, previewDomain);
-
-                            // Remove port prefix from subdomain for SSL compatibility
-                            // Transform: https://8001-uuid-with-hyphens.domain.com
-                            // Into: https://uuidwithhyphens.domain.com
-                            const urlObj = new URL(previewURL);
-                            const hostname = urlObj.hostname;
-                            const parts = hostname.split('.');
-                            if (parts.length >= 2 && parts[0].match(/^\d+-/)) {
-                                // Remove port prefix and hyphens from subdomain
-                                const subdomain = parts[0].replace(/^\d+-/, '').replace(/-/g, '');
-                                parts[0] = subdomain;
-                                urlObj.hostname = parts.join('.');
-                                previewURL = urlObj.toString();
-                            }
                         }
                     }
 
