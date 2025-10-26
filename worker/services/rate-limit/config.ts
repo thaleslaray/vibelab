@@ -81,9 +81,9 @@ export const DEFAULT_RATE_LIMIT_SETTINGS: RateLimitSettings = {
 	llmCalls: {
 		enabled: true,
 		store: RateLimitStore.DURABLE_OBJECT,
-		limit: 100,
+		limit: 1000,
 		period: 60 * 60, // 1 hour
-        dailyLimit: 400,
+        dailyLimit: 5000,
 		excludeBYOKUsers: true,
 	},
 };
