@@ -128,11 +128,6 @@
         {
             "pattern": "vibelab.escoladeautomacao.com.br",
             "custom_domain": true
-        },
-        {
-            "pattern": "*vibelab.escoladeautomacao.com.br/*",
-            "custom_domain": false,
-            "zone_id": "62d749de4db9203cd93203a5a933fb88"
         }
     ],
 	"vars": {
@@ -142,6 +137,7 @@
         "ENABLE_READ_REPLICAS": "true",
         "CLOUDFLARE_AI_GATEWAY": "vibesdk-gateway",
         "CUSTOM_DOMAIN": "vibelab.escoladeautomacao.com.br",
+        "CUSTOM_PREVIEW_DOMAIN": "vibesdk-production.workers.dev",
         "MAX_SANDBOX_INSTANCES": "10",
         "SANDBOX_INSTANCE_TYPE": "standard-3",
         "USE_CLOUDFLARE_IMAGES": false
