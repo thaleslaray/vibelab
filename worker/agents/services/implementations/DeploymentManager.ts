@@ -5,8 +5,7 @@ import {
     SandboxDeploymentCallbacks,
     CloudflareDeploymentCallbacks
 } from '../interfaces/IDeploymentManager';
-import { BootstrapResponse, GitHubPushRequest, StaticAnalysisResponse, RuntimeError, PreviewType } from '../../../services/sandbox/sandboxTypes';
-import { GitHubExportResult } from '../../../services/github/types';
+import { BootstrapResponse, StaticAnalysisResponse, RuntimeError, PreviewType } from '../../../services/sandbox/sandboxTypes';
 import { FileOutputType } from '../../schemas';
 import { generateId } from '../../../utils/idGenerator';
 import { generateAppProxyToken, generateAppProxyUrl } from '../../../services/aigateway-proxy/controller';
@@ -682,46 +681,4 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         };
     }
 
-    /**
-     * Push to GitHub repository
-     */
-    async pushToGitHub(options: GitHubPushRequest): Promise<GitHubExportResult> {
-        const state = this.getState();
-        const logger = this.getLog();
-        const client = this.getClient();
-
-        logger.info('Starting GitHub export', {
-            repositoryUrl: options.repositoryHtmlUrl,
-            fileCount: Object.keys(state.generatedFilesMap).length
-        });
-
-        // Check if we have generated files
-        if (!state.generatedFilesMap || Object.keys(state.generatedFilesMap).length === 0) {
-            throw new Error('No generated files available for export');
-        }
-
-        // Ensure sandbox instance exists
-        if (!state.sandboxInstanceId) {
-            throw new Error('No sandbox instance available');
-        }
-
-        const allFiles = this.fileManager.getGeneratedFiles();
-
-        // Push to GitHub
-        const exportResult = await client.pushToGitHub(
-            state.sandboxInstanceId,
-            options,
-            allFiles
-        );
-
-        if (!exportResult?.success) {
-            throw new Error(`Failed to export to GitHub repository: ${exportResult?.error}`);
-        }
-
-        logger.info('GitHub export completed successfully', { 
-            options,
-            commitSha: exportResult.commitSha
-        });
-        return exportResult;
-    }
 }

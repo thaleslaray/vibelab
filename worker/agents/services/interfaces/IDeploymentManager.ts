@@ -98,8 +98,4 @@ export interface IDeploymentManager {
      */
     deployToCloudflare(callbacks?: CloudflareDeploymentCallbacks): Promise<{ deploymentUrl: string | null; deploymentId?: string }>;
 
-    /**
-     * Push to GitHub repository 
-     */
-    pushToGitHub(options: GitHubPushRequest): Promise<GitHubExportResult>;
 }

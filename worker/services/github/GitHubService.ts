@@ -1,9 +1,8 @@
 /**
- * GitHub Service - Provides secure API-based GitHub repository operations
- * Handles repository creation, file management, and commit synchronization
+ * GitHub service for repository creation and export
  */
 
-import { Octokit, RestEndpointMethodTypes } from '@octokit/rest';
+import { Octokit } from '@octokit/rest';
 import { createLogger } from '../../logger';
 import {
     GitHubRepository,
@@ -11,68 +10,25 @@ import {
     CreateRepositoryResult,
     GitHubServiceError,
 } from './types';
-import { GitHubPushRequest, GitHubPushResponse } from '../sandbox/sandboxTypes';
+import { GitHubPushResponse, TemplateDetails } from '../sandbox/sandboxTypes';
+import { GitCloneService } from '../../agents/git/git-clone-service';
+import git from '@ashishkumar472/cf-git';
+import { prepareCloudflareButton } from '../../utils/deployToCf';
+import type { MemFS } from '../../agents/git/memfs';
 
-interface FileContent {
-    filePath: string;
-    fileContents: string;
-}
-
-interface LocalCommit {
-    hash: string;
-    message: string;
-    timestamp: string;
-}
-
-interface GitContext {
-    localCommits: LocalCommit[];
-    hasUncommittedChanges: boolean;
-}
-
-interface RemoteCommit {
-    sha: string;
-    message: string;
-    date: string;
-}
-
-type GitHubTree = NonNullable<RestEndpointMethodTypes['git']['createTree']['parameters']['tree']>[number];
 
 export class GitHubService {
     private static readonly logger = createLogger('GitHubService');
-    private static readonly DEFAULT_BOT_NAME = 'vibesdk-bot';
-    private static readonly DEFAULT_BOT_EMAIL = 'noreply@vibesdk.com';
-    private static readonly README_CONTENT = '# Generated App\n\nGenerated with vibesdk';
 
-    private static createAuthorInfo(request: GitHubPushRequest, timestamp?: string) {
-        return {
-            name: request.username || GitHubService.DEFAULT_BOT_NAME,
-            email: request.email || GitHubService.DEFAULT_BOT_EMAIL,
-            ...(timestamp && { date: timestamp })
-        };
-    }
-
-    private static createHeaders(token: string, includeContentType = false): Record<string, string> {
-        const headers: Record<string, string> = {
-            Authorization: `token ${token}`,
-            Accept: 'application/vnd.github.v3+json',
-            'User-Agent': 'vibesdk/1.0',
-        };
-
-        if (includeContentType) {
-            headers['Content-Type'] = 'application/json';
-        }
-
-        return headers;
-    }
-
-    private static createOctokit(token: string): Octokit {
+    static createOctokit(token: string): Octokit {
         if (!token?.trim()) {
             throw new GitHubServiceError('No GitHub token provided', 'NO_TOKEN');
         }
         return new Octokit({ auth: token });
     }
+    
     /**
-     * Creates a new GitHub repository with optional auto-initialization
+     * Create a new GitHub repository
      */
     static async createUserRepository(
         options: CreateRepositoryOptions
@@ -87,360 +43,109 @@ export class GitHubService {
         });
         
         try {
-            const response = await fetch('https://api.github.com/user/repos', {
-                method: 'POST',
-                headers: GitHubService.createHeaders(options.token, true),
-                body: JSON.stringify({
-                    name: options.name,
-                    description: options.description,
-                    private: options.private,
-                    auto_init: autoInit,
-                }),
+            const octokit = GitHubService.createOctokit(options.token);
+            
+            const { data: repository } = await octokit.repos.createForAuthenticatedUser({
+                name: options.name,
+                description: options.description,
+                private: options.private,
+                auto_init: autoInit,
             });
 
-            if (!response.ok) {
-                const error = await response.text();
-                GitHubService.logger.error('Repository creation failed', {
-                    status: response.status,
-                    statusText: response.statusText,
-                    error: error,
-                    endpoint: 'https://api.github.com/user/repos'
-                });
-                
-                if (response.status === 403) {
-                    return {
-                        success: false,
-                        error: 'GitHub App lacks required permissions. Please ensure the app has Contents: Write and Metadata: Read permissions, then re-install it.'
-                    };
-                }
-                
+            GitHubService.logger.info('Successfully created repository', {
+                html_url: repository.html_url
+            });
+
+            return {
+                success: true,
+                repository: repository as GitHubRepository
+            };
+        } catch (error: unknown) {
+            const octokitError = error as { status?: number; message?: string; response?: { data?: { errors?: Array<{ field?: string; message?: string }> } } };
+            
+            GitHubService.logger.error('Repository creation failed', {
+                status: octokitError?.status,
+                message: octokitError?.message,
+                name: options.name
+            });
+            
+            if (octokitError?.status === 403) {
                 return {
                     success: false,
-                    error: `Failed to create repository: ${error}`
+                    error: 'GitHub App lacks required permissions. Please ensure the app has Contents: Write and Metadata: Read permissions, then re-install it.'
                 };
             }
-
-            const repository = (await response.json()) as GitHubRepository;
-            GitHubService.logger.info(`Successfully created repository: ${repository.html_url}`);
-
-            return {
-                success: true,
-                repository
-            };
-        } catch (error) {
-            GitHubService.logger.error('Failed to create user repository', error);
+            
+            // Check if repository already exists (422 Unprocessable Entity)
+            if (octokitError?.status === 422) {
+                const hasNameExistsError = octokitError?.response?.data?.errors?.some((e) => 
+                    e.field === 'name' && e.message?.includes('already exists')
+                );
+                
+                if (hasNameExistsError) {
+                    return {
+                        success: false,
+                        error: `Repository '${options.name}' already exists on this account`,
+                        alreadyExists: true,
+                        repositoryName: options.name
+                    };
+                }
+            }
+            
             return {
                 success: false,
-                error: error instanceof Error ? error.message : 'Unknown error'
+                error: error instanceof Error ? error.message : 'Failed to create repository'
             };
         }
     }
 
+
     /**
-     * Pushes files to GitHub repository with intelligent commit strategy based on local and remote state
+     * Get repository information from GitHub
      */
-    static async pushFilesToRepository(
-        files: FileContent[],
-        request: GitHubPushRequest,
-        gitContext?: GitContext
-    ): Promise<GitHubPushResponse> {
+    static async getRepository(options: {
+        owner: string;
+        repo: string;
+        token: string;
+    }): Promise<{ success: boolean; repository?: GitHubRepository; error?: string }> {
         try {
-            GitHubService.logger.info('Initiating GitHub push operation', {
-                repositoryUrl: request.repositoryHtmlUrl,
-                fileCount: files.length,
-                localCommitCount: gitContext?.localCommits?.length || 0,
-                hasUncommittedChanges: gitContext?.hasUncommittedChanges || false
+            const octokit = GitHubService.createOctokit(options.token);
+            
+            const { data: repository } = await octokit.repos.get({
+                owner: options.owner,
+                repo: options.repo
             });
 
-            const octokit = GitHubService.createOctokit(request.token);
-            
-            // Parse repository info from URL
-            const repoInfo = GitHubService.extractRepoInfo(request.cloneUrl || request.repositoryHtmlUrl);
-            if (!repoInfo) {
-                throw new GitHubServiceError('Invalid repository URL format', 'INVALID_REPO_URL');
-            }
-
-            const { owner, repo } = repoInfo;
-
-            // Get repository metadata
-            const { data: repository } = await octokit.rest.repos.get({ owner, repo });
-            const defaultBranch = repository.default_branch || 'main';
-
-            // Fetch remote commit history
-            const remoteCommits = await GitHubService.fetchRemoteCommits(octokit, owner, repo, defaultBranch);
-            
-            // Determine base commit SHA - handle both auto-initialized and empty repositories
-            const parentCommitSha = remoteCommits.length > 0 ? remoteCommits[0].sha : '';
-            
-            GitHubService.logger.info('Repository state analyzed', {
-                defaultBranch,
-                remoteCommitCount: remoteCommits.length,
-                hasParentCommit: !!parentCommitSha,
-                repositoryEmpty: remoteCommits.length === 0
-            });
-
-            // Plan commit strategy
-            const commitStrategy = GitHubService.planCommitStrategy(gitContext, remoteCommits, files);
-            
-            GitHubService.logger.info('Commit strategy planned', {
-                strategy: commitStrategy.type,
-                commitsToCreate: commitStrategy.commits.length,
-                remoteCommitCount: remoteCommits.length
+            GitHubService.logger.info('Successfully fetched repository', {
+                html_url: repository.html_url
             });
             
-            if (files.length === 0) {
-                GitHubService.logger.warn('No files to commit');
-                return { success: true, commitSha: parentCommitSha };
-            }
-
-            if (commitStrategy.commits.length === 0) {
-                GitHubService.logger.info('No commits needed - repository is already in sync');
-                return { success: true, commitSha: parentCommitSha };
-            }
-
-            // Execute commit strategy
-            const finalCommitSha = await GitHubService.executeCommitStrategy(
-                octokit, owner, repo, defaultBranch, commitStrategy, parentCommitSha, request
-            );
-
-            GitHubService.logger.info('GitHub push completed', {
-                repositoryUrl: request.repositoryHtmlUrl,
-                finalCommitSha,
-                strategy: commitStrategy.type,
-                commitsCreated: commitStrategy.commits.length
-            });
-
-            return {
-                success: true,
-                commitSha: finalCommitSha
+            return { 
+                success: true, 
+                repository: repository as GitHubRepository 
             };
-
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            GitHubService.logger.error('Failed to push files to GitHub', {
-                error: errorMessage,
-                repositoryUrl: request.repositoryHtmlUrl,
-                fileCount: files.length
+        } catch (error: unknown) {
+            const octokitError = error as { status?: number; message?: string };
+            
+            GitHubService.logger.error('Failed to fetch repository', {
+                owner: options.owner,
+                repo: options.repo,
+                status: octokitError?.status,
+                message: octokitError?.message
             });
-
-            return {
-                success: false,
-                error: `GitHub push failed: ${errorMessage}`,
-                details: {
-                    operation: 'intelligent_push',
-                    stderr: errorMessage
-                }
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Failed to fetch repository' 
             };
         }
     }
 
     /**
-     * Fetches commit history from remote GitHub repository
+     * Parse owner and repo name from GitHub URL
      */
-    private static async fetchRemoteCommits(
-        octokit: Octokit, 
-        owner: string, 
-        repo: string, 
-        branch: string
-    ): Promise<RemoteCommit[]> {
+    static extractRepoInfo(url: string): { owner: string; repo: string } | null {
         try {
-            const { data: commits } = await octokit.rest.repos.listCommits({
-                owner,
-                repo,
-                sha: branch,
-                per_page: 100 // Get recent history
-            });
-
-            return commits.map(commit => ({
-                sha: commit.sha,
-                message: commit.commit.message,
-                date: commit.commit.author?.date || new Date().toISOString()
-            }));
-        } catch (error) {
-            const githubError = error as { status?: number };
-            if (githubError.status === 409 || githubError.status === 404) {
-                // Empty repository or branch doesn't exist
-                GitHubService.logger.info('Remote repository is empty or branch does not exist');
-                return [];
-            }
-            throw error;
-        }
-    }
-
-    /**
-     * Determines optimal commit strategy based on local and remote repository state
-     */
-    private static planCommitStrategy(
-        gitContext: GitContext | undefined,
-        remoteCommits: RemoteCommit[],
-        files: FileContent[]
-    ): {
-        type: 'single_commit' | 'multi_commit' | 'incremental';
-        commits: Array<{
-            message: string;
-            timestamp: string;
-            files: FileContent[];
-        }>;
-    } {
-        const localCommits = gitContext?.localCommits || [];
-        
-        // Strategy 1: No local history - single commit
-        if (localCommits.length === 0) {
-            return {
-                type: 'single_commit',
-                commits: [{
-                    message: 'Generated app',
-                    timestamp: new Date().toISOString(),
-                    files
-                }]
-            };
-        }
-
-        // Strategy 2: Remote is empty - push all local commits
-        if (remoteCommits.length === 0) {
-            return {
-                type: 'multi_commit',
-                commits: localCommits.map(commit => ({
-                    message: commit.message,
-                    timestamp: commit.timestamp,
-                    files // All files in final commit (simplified)
-                }))
-            };
-        }
-
-        // Strategy 3: Both exist - find what's new and create incremental commits
-        const newLocalCommits = localCommits.filter(local => 
-            !remoteCommits.some(remote => remote.message === local.message)
-        );
-
-        if (newLocalCommits.length > 0) {
-            return {
-                type: 'incremental',
-                commits: newLocalCommits.map(commit => ({
-                    message: commit.message,
-                    timestamp: commit.timestamp,
-                    files
-                }))
-            };
-        }
-
-        // Strategy 4: Everything is in sync - only commit if there are uncommitted changes
-        if (gitContext?.hasUncommittedChanges) {
-            return {
-                type: 'single_commit',
-                commits: [{
-                    message: 'Update generated app',
-                    timestamp: new Date().toISOString(),
-                    files
-                }]
-            };
-        }
-
-        // Strategy 5: Everything is perfectly in sync - no commit needed
-        return {
-            type: 'single_commit',
-            commits: []
-        };
-    }
-
-    /**
-     * Executes the planned commit strategy for the given repository
-     */
-    private static async executeCommitStrategy(
-        octokit: Octokit,
-        owner: string,
-        repo: string,
-        branch: string,
-        strategy: ReturnType<typeof GitHubService.planCommitStrategy>,
-        initialParentSha: string,
-        request: GitHubPushRequest
-    ): Promise<string> {
-        let parentCommitSha = initialParentSha;
-
-        for (const commitPlan of strategy.commits) {
-            if (!parentCommitSha) {
-                // Empty repository - create README to bootstrap, then use normal flow
-                GitHubService.logger.info('Bootstrapping empty repository with README', { 
-                    owner, repo, branch
-                });
-                
-                const { data: readmeCommit } = await octokit.rest.repos.createOrUpdateFileContents({
-                    owner,
-                    repo,
-                    path: 'README.md',
-                    message: 'Initial commit',
-                    content: Buffer.from(GitHubService.README_CONTENT, 'utf8').toString('base64'),
-                    branch,
-                    author: GitHubService.createAuthorInfo(request),
-                    committer: GitHubService.createAuthorInfo(request)
-                });
-
-                if (!readmeCommit.commit.sha) {
-                    throw new GitHubServiceError('Failed to get commit SHA from README creation', 'COMMIT_SHA_MISSING');
-                }
-                parentCommitSha = readmeCommit.commit.sha;
-                
-                GitHubService.logger.info('Repository bootstrapped successfully', { 
-                    owner, repo,
-                    bootstrapCommitSha: parentCommitSha 
-                });
-                
-                // Now fall through to use the normal tree-based approach below
-            }
-            
-            // Repository has commits (either existing or just bootstrapped) - use tree-based approach
-            GitHubService.logger.info('Creating tree-based commit', { 
-                owner, repo, 
-                baseTreeSha: parentCommitSha,
-                fileCount: commitPlan.files.length 
-            });
-            
-            // Create tree entries for all files
-            const treeEntries: GitHubTree[] = commitPlan.files.map(file => ({
-                path: file.filePath,
-                mode: '100644',
-                type: 'blob',
-                content: file.fileContents
-            }));
-
-            const { data: tree } = await octokit.rest.git.createTree({
-                owner,
-                repo,
-                tree: treeEntries,
-                base_tree: parentCommitSha
-            });
-
-            const { data: commit } = await octokit.rest.git.createCommit({
-                owner,
-                repo,
-                message: commitPlan.message,
-                tree: tree.sha,
-                parents: [parentCommitSha],
-                author: GitHubService.createAuthorInfo(request, commitPlan.timestamp),
-                committer: GitHubService.createAuthorInfo(request, commitPlan.timestamp)
-            });
-
-            parentCommitSha = commit.sha;
-
-            // Update branch reference
-            await octokit.rest.git.updateRef({
-                owner,
-                repo,
-                ref: `heads/${branch}`,
-                sha: parentCommitSha,
-                force: true
-            });
-        }
-
-        return parentCommitSha;
-    }
-
-    /**
-     * Extracts owner and repository name from GitHub URL
-     */
-    private static extractRepoInfo(url: string): { owner: string; repo: string } | null {
-        try {
-            // Normalize SSH format to HTTPS
+            // Convert SSH URLs to HTTPS
             let cleanUrl = url;
             
             if (url.startsWith('git@github.com:')) {
@@ -463,5 +168,340 @@ export class GitHubService {
         }
     }
 
+    /**
+     * Export git repository to GitHub
+     */
+    static async exportToGitHub(options: {
+        gitObjects: Array<{ path: string; data: Uint8Array }>;
+        templateDetails: TemplateDetails | null;
+        appQuery: string;
+        appCreatedAt?: Date;
+        token: string;
+        repositoryUrl: string;
+        username: string;
+        email: string;
+    }): Promise<GitHubPushResponse> {
+        try {
+            GitHubService.logger.info('Starting GitHub export from DO git', {
+                gitObjectCount: options.gitObjects.length,
+                repositoryUrl: options.repositoryUrl
+            });
+
+            // Build in-memory repo from DO git objects
+            const fs = await GitCloneService.buildRepository({
+                gitObjects: options.gitObjects,
+                templateDetails: options.templateDetails,
+                appQuery: options.appQuery,
+                appCreatedAt: options.appCreatedAt
+            });
+
+            // Modify README to add GitHub deploy button
+            await GitHubService.modifyReadmeForGitHub(fs, options.repositoryUrl);
+
+            // Get all commits and files from built repo
+            const commits = await git.log({ fs, dir: '/', depth: 1000 });
+            const files = await GitHubService.getAllFilesFromRepo(fs);
+
+            GitHubService.logger.info('Repository built', {
+                commitCount: commits.length,
+                fileCount: files.length
+            });
+
+            // Push to GitHub with force
+            const result = await GitHubService.forcePushToGitHub(
+                options.token,
+                options.repositoryUrl,
+                commits,
+                files,
+                { name: options.username, email: options.email }
+            );
+
+            return result;
+        } catch (error) {
+            GitHubService.logger.error('GitHub export failed', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return {
+                success: false,
+                error: `GitHub export failed: ${errorMessage}`
+            };
+        }
+    }
+
+    /**
+     * Replace [cloudflarebutton] placeholder with deploy button
+     */
+    private static async modifyReadmeForGitHub(fs: MemFS, githubRepoUrl: string): Promise<void> {
+        try {
+            // Check if README exists
+            try {
+                await fs.stat('/README.md');
+            } catch {
+                GitHubService.logger.info('No README.md found, skipping modification');
+                return;
+            }
+
+            const contentRaw = await fs.readFile('/README.md', { encoding: 'utf8' });
+            const content = typeof contentRaw === 'string' ? contentRaw : new TextDecoder().decode(contentRaw);
+            
+            if (!content.includes('[cloudflarebutton]')) {
+                GitHubService.logger.info('README.md has no [cloudflarebutton] placeholder');
+                return;
+            }
+
+            const modified = content.replaceAll(
+                '[cloudflarebutton]',
+                prepareCloudflareButton(githubRepoUrl, 'markdown')
+            );
+
+            await fs.writeFile('/README.md', modified);
+            await git.add({ fs, dir: '/', filepath: 'README.md' });
+            await git.commit({
+                fs,
+                dir: '/',
+                message: 'docs: Add Cloudflare deploy button to README',
+                author: { 
+                    name: 'vibesdk-bot', 
+                    email: 'bot@vibesdk.com',
+                    timestamp: Math.floor(Date.now() / 1000)
+                }
+            });
+
+            GitHubService.logger.info('README.md modified and committed');
+        } catch (error) {
+            GitHubService.logger.warn('Failed to modify README, continuing without', error);
+        }
+    }
+
+    /**
+     * Recursively get all files from repository
+     */
+    private static async getAllFilesFromRepo(fs: MemFS): Promise<Array<{ path: string; content: string }>> {
+        const files: Array<{ path: string; content: string }> = [];
+        
+        const walkDir = async (dir: string) => {
+            const entries = await fs.readdir(dir);
+            
+            for (const entry of entries) {
+                const fullPath = dir === '/' ? `/${entry}` : `${dir}/${entry}`;
+                
+                // Skip .git
+                if (fullPath === '/.git') continue;
+                
+                const stat = await fs.lstat(fullPath);
+                
+                if (stat.type === 'dir') {
+                    await walkDir(fullPath);
+                } else if (stat.type === 'file') {
+                    const contentRaw = await fs.readFile(fullPath, { encoding: 'utf8' });
+                    const content = typeof contentRaw === 'string' ? contentRaw : new TextDecoder().decode(contentRaw);
+                    // Strip leading slash
+                    const relativePath = fullPath.slice(1);
+                    files.push({ path: relativePath, content });
+                }
+            }
+        };
+        
+        await walkDir('/');
+        return files;
+    }
+
+    /**
+     * Force push to GitHub while preserving commit history
+     */
+    private static async forcePushToGitHub(
+        token: string,
+        repoUrl: string,
+        commits: Awaited<ReturnType<typeof git.log>>,
+        files: Array<{ path: string; content: string }>,
+        author: { name: string; email: string }
+    ): Promise<GitHubPushResponse> {
+        try {
+            const repoInfo = GitHubService.extractRepoInfo(repoUrl);
+            if (!repoInfo) {
+                throw new GitHubServiceError('Invalid repository URL format', 'INVALID_REPO_URL');
+            }
+
+            const { owner, repo } = repoInfo;
+            const octokit = GitHubService.createOctokit(token);
+
+            // Get repository and default branch
+            const { data: repository } = await octokit.rest.repos.get({ owner, repo });
+            const branch = repository.default_branch || 'main';
+
+            GitHubService.logger.info('Pushing to GitHub', {
+                owner,
+                repo,
+                branch,
+                commitCount: commits.length,
+                fileCount: files.length
+            });
+
+            // Create file blobs
+            const blobPromises = files.map(file =>
+                octokit.git.createBlob({
+                    owner,
+                    repo,
+                    content: Buffer.from(file.content, 'utf8').toString('base64'),
+                    encoding: 'base64'
+                })
+            );
+            const blobs = await Promise.all(blobPromises);
+
+            GitHubService.logger.info('Blobs created', { blobCount: blobs.length });
+
+            // Create tree
+            const { data: tree } = await octokit.git.createTree({
+                owner,
+                repo,
+                tree: files.map((file, i) => ({
+                    path: file.path,
+                    mode: '100644' as '100644',
+                    type: 'blob' as 'blob',
+                    sha: blobs[i].data.sha
+                }))
+            });
+
+            GitHubService.logger.info('Tree created', { treeSha: tree.sha });
+
+            // Replay commits in order
+            let parentSha: string | undefined;
+            const reversedCommits = [...commits].reverse();
+            
+            for (const commit of reversedCommits) {
+                const { data: newCommit } = await octokit.git.createCommit({
+                    owner,
+                    repo,
+                    message: commit.commit.message,
+                    tree: tree.sha,
+                    parents: parentSha ? [parentSha] : [],
+                    author: {
+                        name: commit.commit.author.name,
+                        email: commit.commit.author.email,
+                        date: new Date(commit.commit.author.timestamp * 1000).toISOString()
+                    },
+                    committer: {
+                        name: commit.commit.committer?.name || author.name,
+                        email: commit.commit.committer?.email || author.email,
+                        date: new Date((commit.commit.committer?.timestamp || commit.commit.author.timestamp) * 1000).toISOString()
+                    }
+                });
+                parentSha = newCommit.sha;
+            }
+
+            if (!parentSha) {
+                throw new Error('No commits were created');
+            }
+
+            // Update branch
+            await octokit.git.updateRef({
+                owner,
+                repo,
+                ref: `heads/${branch}`,
+                sha: parentSha,
+                force: true
+            });
+
+            GitHubService.logger.info('Force push completed', {
+                finalCommitSha: parentSha,
+                branch
+            });
+
+            return {
+                success: true,
+                commitSha: parentSha
+            };
+        } catch (error) {
+            GitHubService.logger.error('Force push failed', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Check remote repository status vs local commits
+     * Builds local repo with template to match export structure
+     */
+    static async checkRemoteStatus(options: {
+        gitObjects: Array<{ path: string; data: Uint8Array }>;
+        templateDetails: TemplateDetails | null;
+        appQuery: string;
+        appCreatedAt?: Date;
+        repositoryUrl: string;
+        token: string;
+    }): Promise<{
+        compatible: boolean;
+        behindBy: number;
+        aheadBy: number;
+        divergedCommits: Array<{
+            sha: string;
+            message: string;
+            author: string;
+            date: string;
+        }>;
+    }> {
+        try {
+            const repoInfo = GitHubService.extractRepoInfo(options.repositoryUrl);
+            if (!repoInfo) {
+                throw new GitHubServiceError('Invalid repository URL', 'INVALID_REPO_URL');
+            }
+
+            const { owner, repo } = repoInfo;
+            const octokit = GitHubService.createOctokit(options.token);
+
+            // Get remote commits
+            const { data: remoteCommits } = await octokit.repos.listCommits({
+                owner,
+                repo,
+                per_page: 100
+            });
+
+            // Build local repo with same template as export
+            const fs = await GitCloneService.buildRepository({
+                gitObjects: options.gitObjects,
+                templateDetails: options.templateDetails,
+                appQuery: options.appQuery,
+                appCreatedAt: options.appCreatedAt
+            });
+
+            const localCommits = await git.log({ fs, dir: '/', depth: 100 });
+
+            // Find divergence
+            // Normalize commit messages by trimming whitespace (git.log adds trailing \n, GitHub API doesn't)
+            const normalizeMessage = (msg: string) => msg.trim();
+            
+            // Ignore system-generated commits that we add to GitHub but don't track locally
+            const isSystemGeneratedCommit = (message: string) => {
+                return normalizeMessage(message).startsWith('docs: Add Cloudflare deploy button');
+            };
+            
+            const localMessages = new Set(localCommits.map(c => normalizeMessage(c.commit.message)));
+            const remoteMessages = new Set(remoteCommits.map(c => normalizeMessage(c.commit.message)));
+
+            const hasCommonCommit = localCommits.some(local =>
+                remoteCommits.some(remote => 
+                    normalizeMessage(remote.commit.message) === normalizeMessage(local.commit.message)
+                )
+            );
+
+            const localOnly = localCommits.filter(c => !remoteMessages.has(normalizeMessage(c.commit.message)));
+            const remoteOnly = remoteCommits.filter(c => 
+                !localMessages.has(normalizeMessage(c.commit.message)) && !isSystemGeneratedCommit(c.commit.message)
+            );
+
+            return {
+                compatible: hasCommonCommit || remoteCommits.length === 0,
+                behindBy: localOnly.length,
+                aheadBy: remoteOnly.length,
+                divergedCommits: remoteOnly.map(c => ({
+                    sha: c.sha,
+                    message: c.commit.message,
+                    author: c.commit.author?.name || 'Unknown',
+                    date: c.commit.author?.date || new Date().toISOString()
+                }))
+            };
+        } catch (error) {
+            GitHubService.logger.error('Failed to check remote status', error);
+            throw error;
+        }
+    }
 
 }
