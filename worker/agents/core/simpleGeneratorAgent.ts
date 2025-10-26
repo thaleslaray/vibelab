@@ -276,8 +276,19 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         
         // Ignore if agent not initialized
         if (!this.state.templateName?.trim()) {
-            this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
-            return;
+            const hasTemplateDetails = 'templateDetails' in (this.state as any);
+            if (hasTemplateDetails) {
+                const templateDetails = (this.state as any).templateDetails;
+                const templateName = (templateDetails as TemplateDetails).name;
+                delete (this.state as any).templateDetails;
+                this.setState({
+                    ...this.state,
+                    templateName
+                });
+            } else {
+                this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
+                return;
+            }
         }
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart being processed, template name: ${this.state.templateName}`);
         // Fill the template cache
@@ -339,8 +350,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return this.templateDetailsCache;
     }
 
-    private getTemplateDetails() {
-        return this.templateDetailsCache!;
+    private getTemplateDetails(): TemplateDetails {
+        if (!this.templateDetailsCache) {
+            throw new Error('Template details not loaded. Call ensureTemplateDetails() first.');
+        }
+        return this.templateDetailsCache;
     }
 
     /*
@@ -2233,6 +2247,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 hasImages: !!images && images.length > 0,
                 imageCount: images?.length || 0
             });
+
+            // Ensure template details are loaded before processing
+            await this.ensureTemplateDetails();
 
             // Just fetch runtime errors
             const errors = await this.fetchRuntimeErrors(false);
