@@ -187,11 +187,18 @@ export function getSecureHeadersConfig(env: Env): SecureHeadersConfig {
                 "ws://localhost:*",
                 "wss://localhost:*",
                 `wss://${env.CUSTOM_DOMAIN || '*'}`,
+                // Preview subdomains
+                `https://*.${env.CUSTOM_DOMAIN || '*'}`,
+                `wss://*.${env.CUSTOM_DOMAIN || '*'}`,
                 // API endpoints
                 "https://api.github.com",
                 "https://api.cloudflare.com"
             ],
-            frameSrc: ["'none'"],
+            frameSrc: [
+                "'self'",
+                // Allow preview iframes from subdomains
+                `https://*.${env.CUSTOM_DOMAIN || '*'}`
+            ],
             objectSrc: ["'none'"],
             mediaSrc: ["'self'"],
             workerSrc: ["'self'", "blob:"],
