@@ -1,6 +1,5 @@
 import { FileOutputType } from '../../schemas';
-import { GitHubPushRequest, StaticAnalysisResponse, RuntimeError, PreviewType } from '../../../services/sandbox/sandboxTypes';
-import { GitHubExportResult } from '../../../services/github/types';
+import { StaticAnalysisResponse, RuntimeError, PreviewType } from '../../../services/sandbox/sandboxTypes';
 import { DeploymentStartedMessage, DeploymentCompletedMessage, DeploymentFailedMessage } from '../../../api/websocketTypes';
 import { CloudflareDeploymentStartedMessage, CloudflareDeploymentCompletedMessage, CloudflareDeploymentErrorMessage } from '../../../api/websocketTypes';
 
