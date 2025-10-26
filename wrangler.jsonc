@@ -131,7 +131,7 @@
         },
         {
             "pattern": "*.vibelab.escoladeautomacao.com.br/*",
-            "custom_domain": true
+            "zone_name": "escoladeautomacao.com.br"
         }
     ],
 	"vars": {
