@@ -16,6 +16,12 @@ export async function getAgentStub(env: Env, agentId: string) : Promise<DurableO
     return getAgentByName<Env, SmartCodeGeneratorAgent>(env.CodeGenObject, agentId);
 }
 
+export async function getAgentStubLightweight(env: Env, agentId: string) : Promise<DurableObjectStub<SmartCodeGeneratorAgent>> {
+    return getAgentByName<Env, SmartCodeGeneratorAgent>(env.CodeGenObject, agentId, {
+        props: { readOnlyMode: true }
+    });
+}
+
 export async function getAgentState(env: Env, agentId: string) : Promise<CodeGenState> {
     const agentInstance = await getAgentStub(env, agentId);
     return await agentInstance.getFullState() as CodeGenState;

@@ -270,8 +270,18 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return this.getAgentId() ? true : false
     }
 
-    async onStart(_props?: Record<string, unknown> | undefined): Promise<void> {
-        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`);
+    async onStart(props?: Record<string, unknown> | undefined): Promise<void> {
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`, { props });
+        
+        // Check if this is a read-only operation
+        const readOnlyMode = props?.readOnlyMode === true;
+        
+        if (readOnlyMode) {
+            this.logger().info(`Agent ${this.getAgentId()} starting in READ-ONLY mode - skipping expensive initialization`);
+            return;
+        }
+        
+        // Full initialization for read-write operations
         await this.gitInit();
         
         // Ignore if agent not initialized
@@ -660,6 +670,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info('Starting code generation', {
             totalFiles: this.getTotalFiles()
         });
+        await this.ensureTemplateDetails();
+        
         let currentDevState = CurrentDevState.PHASE_IMPLEMENTING;
         const generatedPhases = this.state.generatedPhases;
         const incompletedPhases = generatedPhases.filter(phase => !phase.completed);
