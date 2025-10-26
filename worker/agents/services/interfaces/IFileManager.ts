@@ -1,5 +1,5 @@
 import { FileOutputType } from '../../schemas';
-// import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
+import { FileState } from '../../core/state';
 
 /**
  * Interface for file management operations
@@ -24,12 +24,12 @@ export interface IFileManager {
     /**
      * Save a generated file
      */
-    saveGeneratedFile(file: FileOutputType): void;
+    saveGeneratedFile(file: FileOutputType, commitMessage: string): Promise<FileState>;
 
     /**
      * Save multiple generated files
      */
-    saveGeneratedFiles(files: FileOutputType[]): void;
+    saveGeneratedFiles(files: FileOutputType[], commitMessage: string): Promise<FileState[]>;
 
     /**
      * Delete files from the file manager

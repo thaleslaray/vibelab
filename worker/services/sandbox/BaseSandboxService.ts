@@ -27,14 +27,11 @@ import {
     
     GetLogsResponse,
     ListInstancesResponse,
-    GitHubPushRequest,
-    GitHubPushResponse,
     TemplateDetails,
 } from './sandboxTypes';
   
 import { createObjectLogger, StructuredLogger } from '../../logger';
 import { env } from 'cloudflare:workers'
-import { FileOutputType } from 'worker/agents/schemas';
 import { ZipExtractor } from './zipExtractor';
 import { FileTreeBuilder } from './fileTreeBuilder';
 
@@ -314,8 +311,4 @@ export abstract class BaseSandboxService {
     // GITHUB INTEGRATION (Required)
     // ==========================================
 
-    /**
-     * Push instance files to existing GitHub repository
-     */
-    abstract pushToGitHub(instanceId: string, request: GitHubPushRequest, files: FileOutputType[]): Promise<GitHubPushResponse>
 }

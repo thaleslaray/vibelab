@@ -9,6 +9,7 @@ import {
 } from '../schemas';
 import { GitHubPushRequest, PreviewType, StaticAnalysisResponse, TemplateDetails } from '../../services/sandbox/sandboxTypes';
 import {  GitHubExportResult } from '../../services/github/types';
+import { GitHubService } from '../../services/github/GitHubService';
 import { CodeGenState, CurrentDevState, MAX_PHASES } from './state';
 import { AllIssues, AgentSummary, AgentInitArgs, PhaseExecutionResult, UserContext } from './types';
 import { PREVIEW_EXPIRED_ERROR, WebSocketMessageResponses } from '../constants';
@@ -34,10 +35,10 @@ import { InferenceContext, AgentActionKey } from '../inferutils/config.types';
 import { AGENT_CONFIG } from '../inferutils/config';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
 import { fixProjectIssues } from '../../services/code-fixer';
+import { GitVersionControl } from '../git';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand } from '../utils/common';
 import { generateBlueprint } from '../planning/blueprint';
-import { prepareCloudflareButton } from '../../utils/deployToCf';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
 import { ImageAttachment, type ProcessedImageAttachment } from '../../types/image-attachment';
@@ -80,6 +81,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     protected codingAgent: CodingAgentInterface = new CodingAgentInterface(this);
     
     protected deploymentManager!: DeploymentManager;
+    protected git: GitVersionControl;
 
     private previewUrlCache: string = '';
     private templateDetailsCache: TemplateDetails | null = null;
@@ -88,6 +90,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     private pendingUserImages: ProcessedImageAttachment[] = []
     private generationPromise: Promise<void> | null = null;
     private deepDebugPromise: Promise<{ transcript: string } | { error: string }> | null = null;
+    
+    // GitHub token cache (ephemeral, lost on DO eviction)
+    private githubTokenCache: {
+        token: string;
+        username: string;
+        expiresAt: number;
+    } | null = null;
     
     private currentAbortController?: AbortController;
     
@@ -159,9 +168,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             () => this.state,
             (s) => this.setState(s)
         );
-        
+
+        // Initialize GitVersionControl (bind sql to preserve 'this' context)
+        this.git = new GitVersionControl(this.sql.bind(this));
+
         // Initialize FileManager
-        this.fileManager = new FileManager(this.stateManager, () => this.getTemplateDetails());
+        this.fileManager = new FileManager(this.stateManager, () => this.getTemplateDetails(), this.git);
         
         // Initialize DeploymentManager first (manages sandbox client caching)
         // DeploymentManager will use its own getClient() override for caching
@@ -260,6 +272,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     async onStart(_props?: Record<string, unknown> | undefined): Promise<void> {
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`);
+        await this.gitInit();
+        
         // Ignore if agent not initialized
         if (!this.state.templateName?.trim()) {
             this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
@@ -269,6 +283,25 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         // Fill the template cache
         await this.ensureTemplateDetails();
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart processed successfully`);
+    }
+
+    private async gitInit() {
+        try {
+            await this.git.init();
+            this.logger().info("Git initialized successfully");
+            // Check if there is any commit
+            const head = await this.git.getHead();
+            
+            if (!head) {
+                this.logger().info("No commits found, creating initial commit");
+                // get all generated files and commit them
+                const generatedFiles = this.fileManager.getGeneratedFiles();
+                await this.git.commit(generatedFiles, "Initial commit");
+                this.logger().info("Initial commit created successfully");
+            }
+        } catch (error) {
+            this.logger().error("Error during git init:", error);
+        }
     }
     
     onStateUpdate(_state: CodeGenState, _source: "server" | Connection) {}
@@ -554,7 +587,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
         const readme = await this.operations.implementPhase.generateReadme(this.getOperationOptions());
 
-        this.fileManager.saveGeneratedFile(readme);
+        await this.fileManager.saveGeneratedFile(readme, "feat: README.md");
 
         this.broadcast(WebSocketMessageResponses.FILE_GENERATED, {
             message: 'README.md generated successfully',
@@ -1138,7 +1171,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
     
         // Update state with completed phase
-        this.fileManager.saveGeneratedFiles(finalFiles);
+        await this.fileManager.saveGeneratedFiles(finalFiles, `feat: ${phase.name}`);
 
         this.logger().info("Files generated for phase:", phase.name, finalFiles.map(f => f.filePath));
 
@@ -1303,7 +1336,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.getOperationOptions()
         );
 
-        const fileState = this.fileManager.saveGeneratedFile(result);
+        const fileState = await this.fileManager.saveGeneratedFile(result, `fix: ${file.filePath}`);
 
         this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
             message: `Regenerated file: ${file.filePath}`,
@@ -1414,7 +1447,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }, this.getOperationOptions());
 
             if (fastCodeFixer.length > 0) {
-                this.fileManager.saveGeneratedFiles(fastCodeFixer);
+                await this.fileManager.saveGeneratedFiles(fastCodeFixer, "fix: Fast smart code fixes");
                 await this.deployToSandbox(fastCodeFixer);
                 this.logger().info("Fast smart code fixes applied successfully");
             }
@@ -1486,7 +1519,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                             filePurpose: allFiles.find(f => f.filePath === file.filePath)?.filePurpose || '',
                             fileContents: file.fileContents
                     }));
-                    this.fileManager.saveGeneratedFiles(fixedFiles);
+                    await this.fileManager.saveGeneratedFiles(fixedFiles, "fix: applied deterministic fixes");
                     
                     await this.deployToSandbox(fixedFiles, false, "fix: applied deterministic fixes");
                     this.logger().info("Deployed deterministic fixes to sandbox");
@@ -1797,6 +1830,50 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
+    /**
+     * Cache GitHub OAuth token in memory for subsequent exports
+     * Token is ephemeral - lost on DO eviction
+     */
+    setGitHubToken(token: string, username: string, ttl: number = 3600000): void {
+        this.githubTokenCache = {
+            token,
+            username,
+            expiresAt: Date.now() + ttl
+        };
+        this.logger().info('GitHub token cached', { 
+            username, 
+            expiresAt: new Date(this.githubTokenCache.expiresAt).toISOString() 
+        });
+    }
+
+    /**
+     * Get cached GitHub token if available and not expired
+     */
+    getGitHubToken(): { token: string; username: string } | null {
+        if (!this.githubTokenCache) {
+            return null;
+        }
+        
+        if (Date.now() >= this.githubTokenCache.expiresAt) {
+            this.logger().info('GitHub token expired, clearing cache');
+            this.githubTokenCache = null;
+            return null;
+        }
+        
+        return {
+            token: this.githubTokenCache.token,
+            username: this.githubTokenCache.username
+        };
+    }
+
+    /**
+     * Clear cached GitHub token
+     */
+    clearGitHubToken(): void {
+        this.githubTokenCache = null;
+        this.logger().info('GitHub token cleared');
+    }
+
     async onMessage(connection: Connection, message: string): Promise<void> {
         handleWebSocketMessage(this, connection, message);
     }
@@ -2002,27 +2079,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     /**
      * Export generated code to a GitHub repository
-     * Creates repository and pushes all generated files
      */
     async pushToGitHub(options: GitHubPushRequest): Promise<GitHubExportResult> {
         try {
-            this.logger().info('Starting GitHub export', {
-                fileCount: Object.keys(this.state.generatedFilesMap).length
-            });
-
-            // Prepare README with Cloudflare button BEFORE push (if it exists)
-            const readmeFile = this.fileManager.getGeneratedFile('README.md');
-            if (readmeFile && readmeFile.fileContents.includes('[cloudflarebutton]')) {
-                readmeFile.fileContents = readmeFile.fileContents.replaceAll(
-                    '[cloudflarebutton]', 
-                    prepareCloudflareButton(options.repositoryHtmlUrl, 'markdown')
-                );
-                this.fileManager.saveGeneratedFile(readmeFile);
-                this.logger().info('README prepared with Cloudflare deploy button');
-                
-                // Deploy updated README to sandbox so it's visible in preview
-                await this.deployToSandbox([readmeFile], false, "feat: README updated with Cloudflare deploy button");
-            }
+            this.logger().info('Starting GitHub export using DO git');
 
             // Broadcast export started
             this.broadcast(WebSocketMessageResponses.GITHUB_EXPORT_STARTED, {
@@ -2031,48 +2091,121 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 isPrivate: options.isPrivate
             });
 
-            // Update progress for uploading
+            // Export git objects from DO
+            this.broadcast(WebSocketMessageResponses.GITHUB_EXPORT_PROGRESS, {
+                message: 'Preparing git repository...',
+                step: 'preparing',
+                progress: 20
+            });
+
+            const { gitObjects, query, templateDetails } = await this.exportGitObjects();
+            
+            this.logger().info('Git objects exported', {
+                objectCount: gitObjects.length,
+                hasTemplate: !!templateDetails
+            });
+
+            // Get app createdAt timestamp for template base commit
+            let appCreatedAt: Date | undefined = undefined;
+            try {
+                const appId = this.getAgentId();
+                if (appId) {
+                    const appService = new AppService(this.env);
+                    const app = await appService.getAppDetails(appId);
+                    if (app && app.createdAt) {
+                        appCreatedAt = new Date(app.createdAt);
+                        this.logger().info('Using app createdAt for template base', {
+                            createdAt: appCreatedAt.toISOString()
+                        });
+                    }
+                }
+            } catch (error) {
+                this.logger().warn('Failed to get app createdAt, using current time', { error });
+                appCreatedAt = new Date(); // Fallback to current time
+            }
+
+            // Push to GitHub using new service
             this.broadcast(WebSocketMessageResponses.GITHUB_EXPORT_PROGRESS, {
                 message: 'Uploading to GitHub repository...',
                 step: 'uploading_files',
-                progress: 30
+                progress: 40
             });
-            
-            // Call service to handle GitHub push (all files including prepared README)
-            const exportResult = await this.deploymentManager.pushToGitHub(options);
 
-            if (!exportResult?.success) {
-                throw new Error(`Failed to export to GitHub repository: ${exportResult?.error}`);
+            const result = await GitHubService.exportToGitHub({
+                gitObjects,
+                templateDetails,
+                appQuery: query,
+                appCreatedAt,
+                token: options.token,
+                repositoryUrl: options.repositoryHtmlUrl,
+                username: options.username,
+                email: options.email
+            });
+
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to export to GitHub');
             }
 
-            this.logger().info('GitHub export completed successfully', { 
-                repositoryUrl: exportResult.repositoryUrl,
-                cloneUrl: exportResult.cloneUrl
+            this.logger().info('GitHub export completed', { 
+                commitSha: result.commitSha
             });
 
-            // Finalize and update database
+            // Cache token for subsequent exports
+            if (options.token && options.username) {
+                try {
+                    this.setGitHubToken(options.token, options.username);
+                    this.logger().info('GitHub token cached after successful export');
+                } catch (cacheError) {
+                    // Non-fatal - continue with finalization
+                    this.logger().warn('Failed to cache GitHub token', { error: cacheError });
+                }
+            }
+
+            // Update database
             this.broadcast(WebSocketMessageResponses.GITHUB_EXPORT_PROGRESS, {
                 message: 'Finalizing GitHub export...',
                 step: 'finalizing',
                 progress: 90
             });
 
-            this.logger().info('Finalizing GitHub export...');
+            const agentId = this.getAgentId();
+            this.logger().info('[DB Update] Updating app with GitHub repository URL', {
+                agentId,
+                repositoryUrl: options.repositoryHtmlUrl,
+                visibility: options.isPrivate ? 'private' : 'public'
+            });
+
             const appService = new AppService(this.env);
-            await appService.updateGitHubRepository(
-                this.getAgentId() || '',
+            const updateResult = await appService.updateGitHubRepository(
+                agentId || '',
                 options.repositoryHtmlUrl || '',
                 options.isPrivate ? 'private' : 'public'
             );
 
-            // Broadcast success
-            this.broadcast(WebSocketMessageResponses.GITHUB_EXPORT_COMPLETED, {
-                message: `Successfully exported to GitHub repository: ${options.repositoryHtmlUrl}`,
+            this.logger().info('[DB Update] Database update result', {
+                agentId,
+                success: updateResult,
                 repositoryUrl: options.repositoryHtmlUrl
             });
 
-            this.logger().info('GitHub export completed successfully', { repositoryUrl: options.repositoryHtmlUrl });
-            return { success: true, repositoryUrl: options.repositoryHtmlUrl };
+            // Broadcast success
+            this.broadcast(WebSocketMessageResponses.GITHUB_EXPORT_COMPLETED, {
+                message: `Successfully exported to GitHub repository: ${options.repositoryHtmlUrl}`,
+                repositoryUrl: options.repositoryHtmlUrl,
+                cloneUrl: options.cloneUrl,
+                commitSha: result.commitSha
+            });
+
+            this.logger().info('GitHub export completed successfully', { 
+                repositoryUrl: options.repositoryHtmlUrl,
+                commitSha: result.commitSha
+            });
+            
+            return { 
+                success: true, 
+                repositoryUrl: options.repositoryHtmlUrl,
+                cloneUrl: options.cloneUrl
+            };
 
         } catch (error) {
             this.logger().error('GitHub export failed', error);
@@ -2080,7 +2213,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 message: `GitHub export failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 error: error instanceof Error ? error.message : 'Unknown error'
             });
-            return { success: false, repositoryUrl: options.repositoryHtmlUrl };
+            return { 
+                success: false, 
+                repositoryUrl: options.repositoryHtmlUrl,
+                cloneUrl: options.cloneUrl 
+            };
         }
     }
 
@@ -2332,6 +2469,35 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }
             
             throw new Error(`Screenshot capture failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    /**
+     * Export git objects
+     * The route handler will build the repo with template rebasing
+     */
+    async exportGitObjects(): Promise<{
+        gitObjects: Array<{ path: string; data: Uint8Array }>;
+        query: string;
+        hasCommits: boolean;
+        templateDetails: TemplateDetails | null;
+    }> {
+        try {
+            // Export git objects efficiently (minimal DO memory usage)
+            const gitObjects = this.git.fs.exportGitObjects();
+            
+            // Ensure template details are available
+            await this.ensureTemplateDetails();
+            
+            return {
+                gitObjects,
+                query: this.state.query || 'N/A',
+                hasCommits: gitObjects.length > 0,
+                templateDetails: this.templateDetailsCache
+            };
+        } catch (error) {
+            this.logger().error('exportGitObjects failed', error);
+            throw error;
         }
     }
 }

@@ -4,6 +4,7 @@ import { GitHubService } from '../../../services/github';
 import { GitHubExporterOAuthProvider } from '../../../services/oauth/github-exporter';
 import { getAgentStub } from '../../../agents';
 import { createLogger } from '../../../logger';
+import { AppService } from '../../../database/services/AppService';
 
 export interface GitHubExportData {
     success: boolean;
@@ -25,7 +26,121 @@ interface GitHubOAuthCallbackState {
 }
 
 export class GitHubExporterController extends BaseController {
-    static logger = createLogger('GitHubExporterController');
+    static readonly logger = createLogger('GitHubExporterController');
+
+    /**
+     * Creates GitHub repository and pushes files from agent
+     * If existingRepositoryUrl is provided, skips creation and syncs to existing repo
+     */
+    private static async createRepositoryAndPush(options: {
+        env: Env;
+        agentId: string;
+        repositoryName: string;
+        description?: string;
+        isPrivate: boolean;
+        token: string;
+        username: string;
+        existingRepositoryUrl?: string;
+    }): Promise<
+        | { success: true; repositoryUrl: string } 
+        | { success: false; error: string; alreadyExists?: boolean; existingRepositoryUrl?: string }
+    > {
+        const { env, agentId, repositoryName, description, isPrivate, token, username, existingRepositoryUrl } = options;
+        
+        try {
+            let repositoryUrl: string;
+            let cloneUrl: string;
+            
+            // Determine repository details (sync to existing or create new)
+            if (existingRepositoryUrl) {
+                this.logger.info('Syncing to existing repository', { agentId, repositoryUrl: existingRepositoryUrl });
+                
+                repositoryUrl = existingRepositoryUrl;
+                
+                // GitHub clone URL is simply the html_url + .git
+                cloneUrl = existingRepositoryUrl.endsWith('.git') 
+                    ? existingRepositoryUrl 
+                    : `${existingRepositoryUrl}.git`;
+                
+                this.logger.info('Using existing repository URLs', { repositoryUrl, cloneUrl });
+            } else {
+                this.logger.info('Creating new repository', { agentId, repositoryName });
+                
+                const createResult = await GitHubService.createUserRepository({
+                    name: repositoryName,
+                    description,
+                    private: isPrivate,
+                    token
+                });
+
+                if (!createResult.success) {
+                    // Repository already exists on GitHub - fetch the actual repository
+                    if (createResult.alreadyExists && createResult.repositoryName) {
+                        this.logger.warn('Repository already exists, fetching repository info', { 
+                            agentId, 
+                            repositoryName: createResult.repositoryName 
+                        });
+                        
+                        const repoResult = await GitHubService.getRepository({
+                            owner: username,
+                            repo: createResult.repositoryName,
+                            token
+                        });
+                        
+                        if (repoResult.success && repoResult.repository) {
+                            return { 
+                                success: false, 
+                                error: 'Repository already exists',
+                                alreadyExists: true,
+                                existingRepositoryUrl: repoResult.repository.html_url
+                            };
+                        }
+                    }
+                    
+                    return { success: false, error: createResult.error || 'Repository creation failed' };
+                }
+
+                if (!createResult.repository) {
+                    return { success: false, error: 'Repository creation failed' };
+                }
+
+                const { repository } = createResult;
+                repositoryUrl = repository.html_url;
+                cloneUrl = repository.clone_url;
+                
+                this.logger.info('Repository created', { agentId, repositoryUrl });
+            }
+
+            // Push files to repository
+            this.logger.info('Pushing files to repository', { agentId, repositoryUrl });
+            
+            const agentStub = await getAgentStub(env, agentId, true, this.logger);
+            const pushResult = await agentStub.pushToGitHub({
+                cloneUrl,
+                repositoryHtmlUrl: repositoryUrl,
+                isPrivate,
+                token,
+                email: 'vibesdk-bot@cloudflare.com',
+                username
+            });
+
+            if (!pushResult?.success) {
+                return { 
+                    success: false, 
+                    error: pushResult?.error || (existingRepositoryUrl ? 'Sync failed' : 'File push failed')
+                };
+            }
+
+            const operationType = existingRepositoryUrl ? 'Sync' : 'Export';
+            this.logger.info(`${operationType} completed`, { agentId, repositoryUrl });
+            
+            return { success: true, repositoryUrl };
+        } catch (error) {
+            this.logger.error('Repository operation failed', { error, agentId, repositoryName });
+            return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+        }
+    }
+
     static async handleOAuthCallback(
         request: Request,
         env: Env,
@@ -92,91 +207,28 @@ export class GitHubExporterController extends BaseController {
                 purpose
             });
 
-            if (purpose === 'repository_export' && exportData) {
-                const createResult = await GitHubService.createUserRepository({
-                    name: exportData.repositoryName,
+            if (purpose === 'repository_export' && exportData && agentId) {
+                const result = await this.createRepositoryAndPush({
+                    env,
+                    agentId,
+                    repositoryName: exportData.repositoryName,
                     description: exportData.description,
-                    private: exportData.isPrivate || false,
-                    token: tokenResult.accessToken
+                    isPrivate: exportData.isPrivate || false,
+                    token: tokenResult.accessToken,
+                    username: 'vibesdk-bot'
                 });
 
-                if (!createResult.success || !createResult.repository) {
-                    this.logger.error('Failed to create repository during export', {
-                        error: createResult.error,
-                        userId,
-                        repositoryName: exportData.repositoryName
-                    });
+                if (!result.success) {
                     return Response.redirect(
-                        `${returnUrl}?github_export=error&reason=${encodeURIComponent(createResult.error || 'repository_creation_failed')}`,
+                        `${returnUrl}?github_export=error&reason=${encodeURIComponent(result.error)}`,
                         302,
                     );
                 }
 
-                this.logger.info('Repository created successfully, now pushing files', {
-                    userId,
-                    repositoryUrl: createResult.repository.html_url,
-                    repositoryName: exportData.repositoryName,
-                    agentId
-                });
-
-                if (agentId) {
-                    try {
-                        const agentStub = await getAgentStub(env, agentId, true, this.logger);
-
-                        const pushRequest = {
-                            cloneUrl: createResult.repository.clone_url,
-                            repositoryHtmlUrl: createResult.repository.html_url,
-                            isPrivate: createResult.repository.private,
-                            token: tokenResult.accessToken,
-                            email: 'noreply@vibesdk.com',
-                            username: 'vibesdk-bot',
-                            commitMessage: `Initial commit - Generated app\n\n🤖 Generated with vibesdk\nRepository: ${exportData.repositoryName}`
-                        };
-
-                        this.logger.info('Pushing files to repository via agent', {
-                            agentId,
-                            repositoryUrl: createResult.repository.html_url
-                        });
-
-                        const pushResult = await agentStub.pushToGitHub(pushRequest);
-
-                        if (!pushResult?.success) {
-                            this.logger.error('Failed to push files to repository', {
-                                error: pushResult?.error,
-                                agentId,
-                                repositoryUrl: createResult.repository.html_url
-                            });
-                            return Response.redirect(
-                                `${returnUrl}?github_export=error&reason=${encodeURIComponent(pushResult?.error || 'file_push_failed')}`,
-                                302,
-                            );
-                        }
-
-                        this.logger.info('Successfully completed GitHub export with files', {
-                            userId,
-                            agentId,
-                            repositoryUrl: createResult.repository.html_url,
-                            repositoryName: exportData.repositoryName
-                        });
-                    } catch (pushError) {
-                        this.logger.error('Error during file push', {
-                            error: pushError,
-                            agentId,
-                            repositoryUrl: createResult.repository.html_url
-                        });
-                        return Response.redirect(
-                            `${returnUrl}?github_export=error&reason=${encodeURIComponent('file_push_error')}`,
-                            302,
-                        );
-                    }
-                } else {
-                    this.logger.warn('No agentId provided - repository created but files not pushed', {
-                        repositoryUrl: createResult.repository.html_url
-                    });
-                }
+                this.logger.info('OAuth export completed', { userId, agentId, repositoryUrl: result.repositoryUrl });
 
                 return Response.redirect(
-                    `${returnUrl}?github_export=success&repository_url=${encodeURIComponent(createResult.repository.html_url)}`,
+                    `${returnUrl}?github_export=success&repository_url=${encodeURIComponent(result.repositoryUrl)}`,
                     302,
                 );
             }
@@ -215,6 +267,8 @@ export class GitHubExporterController extends BaseController {
                 agentId: string;
             };
 
+            this.logger.info('Export initiated', { userId: context.user.id, agentId: body.agentId });
+
             if (!body.repositoryName) {
                 return GitHubExporterController.createErrorResponse<never>(
                     'Repository name is required',
@@ -227,6 +281,64 @@ export class GitHubExporterController extends BaseController {
                     'Instance ID is required for file pushing',
                     400,
                 );
+            }
+
+            const agentStub = await getAgentStub(env, body.agentId, true, this.logger);
+            const cachedToken = await agentStub.getGitHubToken();
+            
+            if (cachedToken) {
+                this.logger.info('Using cached token', { agentId: body.agentId, username: cachedToken.username });
+                
+                // Check if app already has a GitHub repository URL
+                let existingRepoUrl: string | null = null;
+                try {
+                    const appService = new AppService(env);
+                    const app = await appService.getAppDetails(body.agentId);
+                    existingRepoUrl = app?.githubRepositoryUrl || null;
+                    
+                    if (existingRepoUrl) {
+                        this.logger.info('Found existing GitHub repository', { 
+                            agentId: body.agentId, 
+                            repositoryUrl: existingRepoUrl 
+                        });
+                    }
+                } catch (error) {
+                    this.logger.warn('Failed to check for existing repository', { error, agentId: body.agentId });
+                }
+                
+                const result = await this.createRepositoryAndPush({
+                    env,
+                    agentId: body.agentId,
+                    repositoryName: body.repositoryName,
+                    description: body.description,
+                    isPrivate: body.isPrivate ?? false,
+                    token: cachedToken.token,
+                    username: cachedToken.username,
+                    existingRepositoryUrl: existingRepoUrl || undefined
+                });
+                
+                if (result.success) {
+                    this.logger.info('Direct export completed', { repositoryUrl: result.repositoryUrl, agentId: body.agentId });
+                    return GitHubExporterController.createSuccessResponse({
+                        success: true,
+                        repositoryUrl: result.repositoryUrl,
+                        skippedOAuth: true
+                    });
+                }
+                
+                const isTemporaryError = result.error?.includes('rate limit') || 
+                                        result.error?.includes('timeout') ||
+                                        result.error?.includes('ECONNRESET');
+                
+                if (isTemporaryError) {
+                    this.logger.warn('Temporary error, keeping token', { error: result.error, agentId: body.agentId });
+                    return GitHubExporterController.createErrorResponse(
+                        result.error || 'Temporary GitHub error',
+                        503
+                    );
+                }
+            } else {
+                this.logger.info('No cached token, initiating OAuth', { agentId: body.agentId });
             }
 
             const state: GitHubOAuthCallbackState = {
@@ -249,10 +361,7 @@ export class GitHubExporterController extends BaseController {
                 Buffer.from(JSON.stringify(state)).toString('base64')
             );
 
-            this.logger.info('Initiating GitHub export with OAuth', {
-                userId: context.user.id,
-                repositoryName: body.repositoryName,
-            });
+            this.logger.info('Initiating OAuth flow', { userId: context.user.id, agentId: body.agentId });
 
             return GitHubExporterController.createSuccessResponse<{ authUrl: string }>({
                 authUrl
@@ -262,6 +371,79 @@ export class GitHubExporterController extends BaseController {
             return GitHubExporterController.createErrorResponse<never>(
                 'Failed to initiate GitHub export',
                 500,
+            );
+        }
+    }
+
+    static async checkRemoteStatus(
+        request: Request,
+        env: Env,
+        _ctx: ExecutionContext,
+        context: RouteContext,
+    ): Promise<Response> {
+        try {
+            if (!context.user) {
+                return GitHubExporterController.createErrorResponse<never>(
+                    'Authentication required',
+                    401
+                );
+            }
+
+            const body = await request.json() as {
+                repositoryUrl: string;
+                agentId: string;
+            };
+
+            if (!body.repositoryUrl || !body.agentId) {
+                return GitHubExporterController.createErrorResponse<never>(
+                    'Repository URL and agent ID are required',
+                    400
+                );
+            }
+
+            const agentStub = await getAgentStub(env, body.agentId, true, this.logger);
+            
+            // Try to get cached token
+            const cachedToken = await agentStub.getGitHubToken();
+            
+            if (!cachedToken) {
+                return GitHubExporterController.createErrorResponse<never>(
+                    'No cached GitHub token. Please re-authenticate.',
+                    401
+                );
+            }
+
+            // Export git objects and template details
+            const { gitObjects, query, templateDetails } = await agentStub.exportGitObjects();
+            
+            // Get app createdAt
+            let appCreatedAt: Date | undefined;
+            try {
+                const appService = new AppService(env);
+                const app = await appService.getAppDetails(body.agentId);
+                if (app && app.createdAt) {
+                    appCreatedAt = new Date(app.createdAt);
+                }
+            } catch (error) {
+                this.logger.warn('Failed to get app createdAt for sync check', { error });
+            }
+            
+            // Check remote status
+            const status = await GitHubService.checkRemoteStatus({
+                gitObjects,
+                templateDetails,
+                appQuery: query,
+                appCreatedAt,
+                repositoryUrl: body.repositoryUrl,
+                token: cachedToken.token
+            });
+
+            return GitHubExporterController.createSuccessResponse(status);
+        } catch (error) {
+            this.logger.error('Failed to check remote status', error);
+            return GitHubExporterController.createErrorResponse<never>(
+                'Failed to check remote status',
+                500
             );
         }
     }

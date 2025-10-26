@@ -5,6 +5,7 @@ import { FileOutputType } from '../../schemas';
 import { FileProcessing } from '../../domain/pure/FileProcessing';
 import { FileState } from 'worker/agents/core/state';
 import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
+import { GitVersionControl } from 'worker/agents/git';
 
 /**
  * Manages file operations for code generation
@@ -13,7 +14,8 @@ import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 export class FileManager implements IFileManager {
     constructor(
         private stateManager: IStateManager,
-        private getTemplateDetailsFunc: () => TemplateDetails
+        private getTemplateDetailsFunc: () => TemplateDetails,
+        private git: GitVersionControl
     ) {}
 
     getGeneratedFile(path: string): FileOutputType | null {
@@ -36,11 +38,12 @@ export class FileManager implements IFileManager {
         return FileProcessing.getAllFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
     }
 
-    saveGeneratedFile(file: FileOutputType): FileState {
-        return this.saveGeneratedFiles([file])[0];
+    async saveGeneratedFile(file: FileOutputType, commitMessage: string): Promise<FileState> {
+        const results = await this.saveGeneratedFiles([file], commitMessage);
+        return results[0];
     }
 
-    saveGeneratedFiles(files: FileOutputType[]): FileState[] {
+    async saveGeneratedFiles(files: FileOutputType[], commitMessage: string): Promise<FileState[]> {
         const filesMap = { ...this.stateManager.getState().generatedFilesMap };
         const fileStates: FileState[] = [];
         
@@ -56,10 +59,6 @@ export class FileManager implements IFileManager {
             if (oldFileContents !== file.fileContents) {
                 try {
                     lastDiff = Diff.createPatch(file.filePath, oldFileContents, file.fileContents);
-                    if (lastDiff) {
-                        const isNewFile = oldFileContents === '';
-                        console.log(`Generated diff for ${isNewFile ? 'new' : ''} file ${file.filePath}:`, lastDiff);
-                    }
                 } catch (error) {
                     console.error(`Failed to generate diff for file ${file.filePath}:`, error);
                 }
@@ -80,6 +79,14 @@ export class FileManager implements IFileManager {
             ...this.stateManager.getState(),
             generatedFilesMap: filesMap
         });
+
+        try {
+            console.log(`[FileManager] Committing ${fileStates.length} files:`, commitMessage);
+            await this.git.commit(fileStates, commitMessage);
+            console.log(`[FileManager] Commit successful`);
+        } catch (error) {
+            console.error(`[FileManager] Failed to commit files:`, error, commitMessage);
+        }
         return fileStates;
     }
 

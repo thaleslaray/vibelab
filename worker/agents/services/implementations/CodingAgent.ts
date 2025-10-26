@@ -112,7 +112,7 @@ export class CodingAgentInterface {
         issue: string,
         toolRenderer: RenderToolCall,
         streamCb: (chunk: string) => void,
-        focusPaths?: string[],
+        focusPaths?: string[]
     ): Promise<DeepDebugResult> {
         return this.agentStub.executeDeepDebug(issue, toolRenderer, streamCb, focusPaths);
     }

@@ -9,6 +9,7 @@ import { getPreviewDomain } from './utils/urls';
 import { proxyToAiGateway } from './services/aigateway-proxy/controller';
 import { isOriginAllowed } from './config/security';
 import { proxyToSandbox } from './services/sandbox/request-handler';
+import { handleGitProtocolRequest, isGitProtocolRequest } from './api/handlers/git-protocol';
 
 // Durable Object and Service exports
 export { UserAppSandboxService, DeployerService } from './services/sandbox/sandboxSdkClient';
@@ -110,7 +111,7 @@ async function handleUserAppRequest(request: Request, env: Env): Promise<Respons
  */
 const worker = {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-        // logger.info(`Received request: ${request.method} ${request.url}`);
+        logger.info(`Received request: ${request.method} ${request.url}`);
 		// --- Pre-flight Checks ---
 
 		// 1. Critical configuration check: Ensure custom domain is set.
@@ -140,6 +141,12 @@ const worker = {
 
 		// Route 1: Main Platform Request (e.g., build.cloudflare.dev or localhost)
 		if (isMainDomainRequest) {
+			// Handle Git protocol endpoints directly
+			// Route: /apps/:id.git/info/refs or /apps/:id.git/git-upload-pack
+			if (isGitProtocolRequest(pathname)) {
+				return handleGitProtocolRequest(request, env, ctx);
+			}
+			
 			// Serve static assets for all non-API routes from the ASSETS binding.
 			if (!pathname.startsWith('/api/')) {
 				return env.ASSETS.fetch(request);

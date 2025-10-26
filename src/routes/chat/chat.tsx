@@ -59,7 +59,7 @@ export default function Chat() {
 	}, [searchParams]);
 
 	// Load existing app data if chatId is provided
-	const { app, loading: appLoading } = useApp(urlChatId);
+	const { app, loading: appLoading, refetch: refetchApp } = useApp(urlChatId);
 
 	// If we have an existing app, use its data
 	const displayQuery = app ? app.originalPrompt || app.title : userQuery || '';
@@ -141,7 +141,7 @@ export default function Chat() {
 	});
 
 	// GitHub export functionality - use urlChatId directly from URL params
-	const githubExport = useGitHubExport(websocket, urlChatId);
+	const githubExport = useGitHubExport(websocket, urlChatId, refetchApp);
 
 	const navigate = useNavigate();
 
@@ -1173,6 +1173,9 @@ export default function Chat() {
 				exportProgress={githubExport.progress}
 				exportResult={githubExport.result}
 				onRetry={githubExport.retry}
+				existingGithubUrl={app?.githubRepositoryUrl || null}
+				agentId={urlChatId || undefined}
+				appTitle={app?.title}
 			/>
 		</div>
 	);
