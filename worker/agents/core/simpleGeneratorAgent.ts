@@ -40,7 +40,7 @@ import { generateBlueprint } from '../planning/blueprint';
 import { prepareCloudflareButton } from '../../utils/deployToCf';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
-import { generateId } from 'worker/utils/idGenerator';
+import { generateId, generateIdForSubdomain } from 'worker/utils/idGenerator';
 import { ImageAttachment, type ProcessedImageAttachment } from '../../types/image-attachment';
 import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
@@ -1701,12 +1701,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     private async createNewPreview(): Promise<PreviewType | null> {
         // Create new deployment
         const templateName = this.state.templateDetails?.name || 'scratch';
-        // Generate a unique suffix
-        let prefix = (this.state.blueprint?.projectName || templateName).toLowerCase().replace(/[^a-z0-9]/g, '-');
-        const uniqueSuffix = generateId();
+        // Generate a unique suffix without hyphens for SSL compatibility
+        let prefix = (this.state.blueprint?.projectName || templateName).toLowerCase().replace(/[^a-z0-9]/g, '');
+        const uniqueSuffix = generateIdForSubdomain();
         // Only use the first 20 characters of the prefix
         prefix = prefix.slice(0, 20);
-        const projectName = `${prefix}-${uniqueSuffix}`.toLowerCase();
+        const projectName = `${prefix}${uniqueSuffix}`.toLowerCase();
         
         // Generate webhook URL for this agent instance
         const webhookUrl = this.generateWebhookUrl();
