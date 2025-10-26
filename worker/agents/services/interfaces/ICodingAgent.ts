@@ -30,7 +30,7 @@ export abstract class ICodingAgent {
 
     abstract runStaticAnalysisCode(files?: string[]): Promise<StaticAnalysisResponse>;
 
-    abstract execCommands(commands: string[], timeout?: number): Promise<ExecuteCommandsResponse>;
+    abstract execCommands(commands: string[], shouldSave: boolean, timeout?: number): Promise<ExecuteCommandsResponse>;
     
     abstract regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }>;
 

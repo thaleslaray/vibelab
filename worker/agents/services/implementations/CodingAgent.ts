@@ -73,8 +73,8 @@ export class CodingAgentInterface {
         return this.agentStub.runStaticAnalysisCode(files);
     }
 
-    execCommands(commands: string[], timeout?: number): Promise<ExecuteCommandsResponse> {
-        return this.agentStub.execCommands(commands, timeout);
+    execCommands(commands: string[], shouldSave: boolean, timeout?: number): Promise<ExecuteCommandsResponse> {
+        return this.agentStub.execCommands(commands, shouldSave, timeout);
     }
 
     // Exposes a simplified regenerate API for tools

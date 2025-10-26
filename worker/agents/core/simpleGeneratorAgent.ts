@@ -1644,12 +1644,15 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return { files: resp.files.map(f => ({ path: f.filePath, content: f.fileContents })) };
     }
 
-    async execCommands(commands: string[], timeout?: number) {
+    async execCommands(commands: string[], shouldSave: boolean, timeout?: number) {
         const { sandboxInstanceId } = this.state;
         if (!sandboxInstanceId) {
             return { success: false, results: [], error: 'No sandbox instance' } as any;
         }
-        return await this.getSandboxServiceClient().executeCommands(sandboxInstanceId, commands, timeout);
+        await this.getSandboxServiceClient().executeCommands(sandboxInstanceId, commands, timeout);
+        if (shouldSave) {
+            this.saveExecutedCommands(commands);
+        }
     }
 
     async regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }> {
@@ -1923,6 +1926,14 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         broadcastToConnections(this, msg, data || {} as WebSocketMessageData<T>);
     }
 
+    private async saveExecutedCommands(commands: string[]) {
+        this.logger().info('Saving executed commands', { commands });
+        this.setState({
+            ...this.state,
+            commandsHistory: [...(this.state.commandsHistory || []), ...commands]
+        });
+    }
+
     /**
      * Execute commands with retry logic
      * Chunks commands and retries failed ones with AI assistance
@@ -2054,10 +2065,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info(`All commands executed successfully: ${successfulCommands.join(", ")}`);
         }
 
-        this.setState({
-            ...this.state,
-            commandsHistory: [...(this.state.commandsHistory || []), ...successfulCommands]
-        });
+        this.saveExecutedCommands(successfulCommands);
     }
 
     async getLogs(_reset?: boolean, durationSeconds?: number): Promise<string> {

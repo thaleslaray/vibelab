@@ -359,6 +359,8 @@ You're done when:
 - No play-by-play narration - just execute
 - Quality through internal reasoning, not verbose output
 
+- Beware: the app is running in a sandbox environment, and any changes made to it directly (e.g., via exec_commands without shouldSave=true) would be lost when the sandbox is destroyed and not persist in the app's storage.
+
 The goal is working code, verified through evidence. Think internally, act decisively.
 
 <appendix>
