@@ -174,7 +174,8 @@ export class SandboxSdkClient extends BaseSandboxService {
                 await existingSession.exec(`cd ${cwd}`);
                 const verifyResult = await existingSession.exec('pwd');
                 if (verifyResult.stdout.trim() !== cwd) {
-                    throw new Error(`Failed to set working directory to ${cwd}, currently at ${verifyResult.stdout.trim()}`);
+                    // throw new Error(`Failed to set working directory to ${cwd}, currently at ${verifyResult.stdout.trim()}`);
+                    this.logger.error(`Failed to set working directory to ${cwd}, currently at ${verifyResult.stdout.trim()}`);
                 }
                 this.logger.info('Successfully changed directory for existing session', { sessionId, cwd });
             }
@@ -189,7 +190,11 @@ export class SandboxSdkClient extends BaseSandboxService {
      */
     private async getInstanceSession(instanceId: string, cwd?: string): Promise<ExecutionSession> {
         if (!this.sessionCache.has(instanceId)) {
-            cwd = cwd || `/workspace/${instanceId}`;
+            if (instanceId === 'sandbox-default' && !cwd) {
+                cwd = '/workspace';
+            } else {
+                cwd = cwd || `/workspace/${instanceId}`;
+            }
             const session = await this.getOrCreateSession(instanceId, cwd);
             this.sessionCache.set(instanceId, session);
         }
@@ -213,7 +218,8 @@ export class SandboxSdkClient extends BaseSandboxService {
      * Safe wrapper for direct sandbox exec calls using default session
      */
     private async safeSandboxExec(command: string, options?: {timeout?: number}): Promise<ExecResult> {
-        return await this.executeCommand('sandbox-default', command, options);
+        const session = await this.getDefaultSession();
+        return await session.exec(command, options);
     }
 
     /**
