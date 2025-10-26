@@ -144,7 +144,7 @@ const worker = {
 			// Handle Git protocol endpoints directly
 			// Route: /apps/:id.git/info/refs or /apps/:id.git/git-upload-pack
 			if (isGitProtocolRequest(pathname)) {
-				return handleGitProtocolRequest(request, env);
+				return handleGitProtocolRequest(request, env, ctx);
 			}
 			
 			// Serve static assets for all non-API routes from the ASSETS binding.

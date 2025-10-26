@@ -157,23 +157,25 @@ export class GitVersionControl {
 
     async getHead(): Promise<string | null> {
         try {
-            console.log('[Git] getHead: Starting git.resolveRef...');
+            let timeoutId: ReturnType<typeof setTimeout> | null = null;
             
-            // Add timeout to detect hangs
             const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => {
-                    console.error('[Git] getHead: TIMEOUT after 5 seconds - git.resolveRef is hanging!');
+                timeoutId = setTimeout(() => {
                     reject(new Error('git.resolveRef timed out after 5 seconds'));
                 }, 5000);
             });
             
             const resolvePromise = git.resolveRef({ fs: this.fs, dir: '/', ref: 'HEAD' });
             
-            const result = await Promise.race([resolvePromise, timeoutPromise]);
-            console.log('[Git] getHead: Resolved to', result);
-            return result;
-        } catch (error) {
-            console.log('[Git] getHead: Error or timeout:', error);
+            try {
+                const result = await Promise.race([resolvePromise, timeoutPromise]);
+                return result;
+            } finally {
+                if (timeoutId !== null) {
+                    clearTimeout(timeoutId);
+                }
+            }
+        } catch {
             return null;
         }
     }

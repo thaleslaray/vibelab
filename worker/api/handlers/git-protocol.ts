@@ -10,6 +10,7 @@ import { createLogger } from '../../logger';
 import { GitCloneService } from '../../agents/git/git-clone-service';
 import { AppService } from '../../database/services/AppService';
 import { JWTUtils } from '../../utils/jwtUtils';
+import { GitCache } from './git-cache';
 
 const logger = createLogger('GitProtocol');
 
@@ -35,6 +36,24 @@ function extractAppId(pathname: string): string | null {
     
     const uploadPackMatch = pathname.match(GIT_UPLOAD_PACK_PATTERN);
     if (uploadPackMatch) return uploadPackMatch[1];
+    
+    return null;
+}
+
+/**
+ * Extract agent HEAD OID from git objects
+ */
+function extractAgentHeadOid(gitObjects: Array<{ path: string; data: Uint8Array }>): string | null {
+    const headFile = gitObjects.find(obj => obj.path === '.git/HEAD');
+    if (!headFile) return null;
+    
+    const headContent = new TextDecoder().decode(headFile.data).trim();
+    
+    if (headContent.startsWith('ref: ')) {
+        const refPath = headContent.slice(5).trim();
+        const refFile = gitObjects.find(obj => obj.path === `.git/${refPath}`);
+        return refFile ? new TextDecoder().decode(refFile.data).trim() : null;
+    }
     
     return null;
 }
@@ -96,7 +115,12 @@ async function verifyGitAccess(
 /**
  * Handle Git info/refs request
  */
-async function handleInfoRefs(request: Request, env: Env, appId: string): Promise<Response> {
+async function handleInfoRefs(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+    appId: string
+): Promise<Response> {
     try {
         // Verify access first
         const { hasAccess, appCreatedAt } = await verifyGitAccess(request, env, appId);
@@ -123,6 +147,31 @@ async function handleInfoRefs(request: Request, env: Env, appId: string): Promis
             });
         }
         
+        // Extract HEAD OID for cache validation
+        const agentHeadOid = extractAgentHeadOid(gitObjects);
+        if (!agentHeadOid) {
+            throw new Error('Could not determine agent HEAD OID');
+        }
+        
+        // Try memory cache first
+        const cache = new GitCache();
+        const { repo } = await cache.getRepository(appId, agentHeadOid, templateDetails);
+        
+        if (repo) {
+            logger.info('Cache HIT (memory): info/refs', { appId, agentHeadOid });
+            const response = await GitCloneService.handleInfoRefs(repo);
+            return new Response(response, {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/x-git-upload-pack-advertisement',
+                    'Cache-Control': 'no-cache',
+                    'X-Cache': 'HIT-MEMORY'
+                }
+            });
+        }
+        
+        logger.info('Cache MISS: building repository', { appId, agentHeadOid });
+        
         // Build repository in worker
         const repoFS = await GitCloneService.buildRepository({
             gitObjects,
@@ -131,13 +180,22 @@ async function handleInfoRefs(request: Request, env: Env, appId: string): Promis
             appCreatedAt
         });
         
+        // Store in memory for subsequent upload-pack request
+        cache.storeRepository(appId, repoFS, agentHeadOid, templateDetails);
+        
+        // Use waitUntil to keep Worker alive for upload-pack request (typically arrives within seconds)
+        ctx.waitUntil(
+            new Promise(resolve => setTimeout(resolve, 5000))
+        );
+        
         // Generate info/refs response
         const response = await GitCloneService.handleInfoRefs(repoFS);
         return new Response(response, {
             status: 200,
             headers: {
                 'Content-Type': 'application/x-git-upload-pack-advertisement',
-                'Cache-Control': 'no-cache'
+                'Cache-Control': 'no-cache',
+                'X-Cache': 'MISS'
             }
         });
     } catch (error) {
@@ -149,7 +207,12 @@ async function handleInfoRefs(request: Request, env: Env, appId: string): Promis
 /**
  * Handle Git upload-pack request
  */
-async function handleUploadPack(request: Request, env: Env, appId: string): Promise<Response> {
+async function handleUploadPack(
+    request: Request,
+    env: Env,
+    _ctx: ExecutionContext,
+    appId: string
+): Promise<Response> {
     try {
         // Verify access first
         const { hasAccess, appCreatedAt } = await verifyGitAccess(request, env, appId);
@@ -169,7 +232,32 @@ async function handleUploadPack(request: Request, env: Env, appId: string): Prom
             return new Response('No commits to pack', { status: 404 });
         }
         
-        // Build repository in worker
+        // Extract HEAD OID for cache validation
+        const agentHeadOid = extractAgentHeadOid(gitObjects);
+        if (!agentHeadOid) {
+            throw new Error('Could not determine agent HEAD OID');
+        }
+        
+        // Try memory cache first (HOT PATH - usually hits after info/refs!)
+        const cache = new GitCache();
+        const { repo, source } = await cache.getRepository(appId, agentHeadOid, templateDetails);
+        
+        if (repo) {
+            logger.info(`Cache HIT (${source}): upload-pack`, { appId, agentHeadOid });
+            const packfile = await GitCloneService.handleUploadPack(repo);
+            return new Response(packfile, {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/x-git-upload-pack-result',
+                    'Cache-Control': 'no-cache',
+                    'X-Cache': `HIT-${source.toUpperCase()}`
+                }
+            });
+        }
+        
+        logger.info('Cache MISS: building repository', { appId, agentHeadOid });
+        
+        // Build repository in worker (cold path - different Worker or timeout)
         const repoFS = await GitCloneService.buildRepository({
             gitObjects,
             templateDetails,
@@ -177,13 +265,17 @@ async function handleUploadPack(request: Request, env: Env, appId: string): Prom
             appCreatedAt
         });
         
+        // Store in memory for potential retries
+        cache.storeRepository(appId, repoFS, agentHeadOid, templateDetails);
+        
         // Generate packfile with full commit history
         const packfile = await GitCloneService.handleUploadPack(repoFS);
         return new Response(packfile, {
             status: 200,
             headers: {
                 'Content-Type': 'application/x-git-upload-pack-result',
-                'Cache-Control': 'no-cache'
+                'Cache-Control': 'no-cache',
+                'X-Cache': 'MISS'
             }
         });
     } catch (error) {
@@ -197,7 +289,8 @@ async function handleUploadPack(request: Request, env: Env, appId: string): Prom
  */
 export async function handleGitProtocolRequest(
     request: Request,
-    env: Env
+    env: Env,
+    ctx: ExecutionContext
 ): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -210,9 +303,9 @@ export async function handleGitProtocolRequest(
     
     // Route to appropriate handler
     if (GIT_INFO_REFS_PATTERN.test(pathname)) {
-        return handleInfoRefs(request, env, appId);
+        return handleInfoRefs(request, env, ctx, appId);
     } else if (GIT_UPLOAD_PACK_PATTERN.test(pathname)) {
-        return handleUploadPack(request, env, appId);
+        return handleUploadPack(request, env, ctx, appId);
     }
     
     return new Response('Not found', { status: 404 });
