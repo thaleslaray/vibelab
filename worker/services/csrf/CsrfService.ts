@@ -42,7 +42,7 @@ export class CsrfService {
         const cookie = createSecureCookie({
             name: this.COOKIE_NAME,
             value: JSON.stringify(tokenData),
-            sameSite: 'Strict',
+            sameSite: 'Lax',
             maxAge
         });
         response.headers.append('Set-Cookie', cookie);
@@ -239,7 +239,7 @@ export class CsrfService {
         const cookie = createSecureCookie({
             name: this.COOKIE_NAME,
             value: '',
-            sameSite: 'Strict',
+            sameSite: 'Lax',
             maxAge: 0
         });
         response.headers.append('Set-Cookie', cookie);
