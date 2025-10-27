@@ -51,6 +51,7 @@ export interface ModelConfig {
     max_tokens?: number;
     temperature?: number;
     fallbackModel?: AIModels | string;
+    systemPrompt?: string;
 }
 
 export interface AgentConfig {

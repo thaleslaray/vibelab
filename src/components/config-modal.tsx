@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Settings, Play, RotateCcw, Info, Key } from 'lucide-react';
+import { Settings, Play, RotateCcw, Info, Key, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ModelSelector } from '@/components/ui/model-selector';
 import { Check } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -101,12 +102,14 @@ export function ConfigModal({
     maxTokens: userConfig?.max_tokens?.toString() || '',
     temperature: userConfig?.temperature?.toString() || '',
     reasoningEffort: userConfig?.reasoning_effort || 'default',
-    fallbackModel: userConfig?.fallbackModel || 'default'
+    fallbackModel: userConfig?.fallbackModel || 'default',
+    systemPrompt: userConfig?.systemPrompt || ''
   });
 
   // UI state
   const [hasChanges, setHasChanges] = useState(false);
   const [byokModalOpen, setByokModalOpen] = useState(false);
+  const [showDefaultPrompt, setShowDefaultPrompt] = useState(false);
   
   // Modal lifecycle tracking
   const [isInitialOpen, setIsInitialOpen] = useState(false);
@@ -139,10 +142,12 @@ export function ConfigModal({
         maxTokens: userConfig?.max_tokens?.toString() || '',
         temperature: userConfig?.temperature?.toString() || '',
         reasoningEffort: userConfig?.reasoning_effort || 'default',
-        fallbackModel: userConfig?.fallbackModel || 'default'
+        fallbackModel: userConfig?.fallbackModel || 'default',
+        systemPrompt: userConfig?.systemPrompt || ''
       });
       setHasChanges(false);
       setByokModalOpen(false);
+      setShowDefaultPrompt(false);
       setIsInitialOpen(true);
       loadByokData();
     } else if (!isOpen && isInitialOpen) {
@@ -165,9 +170,10 @@ export function ConfigModal({
       maxTokens: userConfig?.max_tokens?.toString() || '',
       temperature: userConfig?.temperature?.toString() || '',
       reasoningEffort: userConfig?.reasoning_effort || 'default',
-      fallbackModel: userConfig?.fallbackModel || 'default'
+      fallbackModel: userConfig?.fallbackModel || 'default',
+      systemPrompt: userConfig?.systemPrompt || ''
     };
-    
+
     setHasChanges(JSON.stringify(formData) !== JSON.stringify(originalFormData));
   }, [formData, userConfig]);
 
@@ -250,6 +256,7 @@ export function ConfigModal({
       ...(formData.temperature && { temperature: parseFloat(formData.temperature) }),
       ...(formData.reasoningEffort !== 'default' && { reasoningEffort: formData.reasoningEffort }),
       ...(formData.fallbackModel !== 'default' && { fallbackModel: formData.fallbackModel }),
+      ...(formData.systemPrompt && { systemPrompt: formData.systemPrompt }),
       isUserOverride: true
     };
   };
@@ -489,6 +496,82 @@ export function ConfigModal({
                 )}
               </div>
             </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* System Prompt Section */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="font-medium text-sm">System Prompt</h4>
+              <p className="text-xs text-text-tertiary mt-1">
+                Customize the system prompt that instructs the AI agent
+              </p>
+            </div>
+            {defaultConfig?.systemPrompt && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowDefaultPrompt(!showDefaultPrompt)}
+                className="gap-2"
+              >
+                {showDefaultPrompt ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showDefaultPrompt ? 'Hide' : 'View'} Default
+              </Button>
+            )}
+          </div>
+
+          {showDefaultPrompt && defaultConfig?.systemPrompt && (
+            <div className="p-4 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                  Default System Prompt
+                </Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setFormData({...formData, systemPrompt: defaultConfig.systemPrompt || ''});
+                    setShowDefaultPrompt(false);
+                  }}
+                  className="h-auto py-1 px-2 text-xs text-blue-700 dark:text-blue-300"
+                >
+                  Use This
+                </Button>
+              </div>
+              <pre className="text-xs text-blue-700 dark:text-blue-300 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                {defaultConfig.systemPrompt}
+              </pre>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Custom System Prompt</Label>
+            <Textarea
+              value={formData.systemPrompt}
+              onChange={(e) => setFormData({...formData, systemPrompt: e.target.value})}
+              placeholder={defaultConfig?.systemPrompt ? "Leave empty to use default prompt" : "Enter custom system prompt"}
+              className="min-h-[200px] font-mono text-sm"
+              rows={10}
+            />
+            {formData.systemPrompt && formData.systemPrompt !== defaultConfig?.systemPrompt && (
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-text-tertiary">
+                  Using custom system prompt ({formData.systemPrompt.length} characters)
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFormData({...formData, systemPrompt: defaultConfig?.systemPrompt || ''})}
+                  className="h-auto py-1 px-2 text-xs"
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Reset to Default
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 

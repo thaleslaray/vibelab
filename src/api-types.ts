@@ -94,6 +94,7 @@ export interface ModelConfigUpdate {
   temperature?: number | null;
   reasoningEffort?: string | null;
   fallbackModel?: string | null;
+  systemPrompt?: string | null;
   isUserOverride?: boolean;
 }
 
