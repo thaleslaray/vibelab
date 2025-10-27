@@ -6,6 +6,7 @@ import { FileOutputType, PhaseConceptType } from '../schemas';
 import { SCOFFormat } from '../output-formats/streaming-formats/scof';
 import { CodeIssue } from '../../services/sandbox/sandboxTypes';
 import { CodeSerializerType } from '../utils/codeSerializers';
+import { FAST_CODE_FIXER_PROMPT } from '../inferutils/defaultPrompts';
 
 export interface FastCodeFixerInputs {
     query: string;
@@ -14,7 +15,7 @@ export interface FastCodeFixerInputs {
     allPhases?: PhaseConceptType[];
 }
 
-const SYSTEM_PROMPT = `You are a Senior Software Engineer at Cloudflare's Incident Response Team specializing in rapid bug fixes. Your task is to analyze identified code issues and generate complete fixed files using the SCOF format.`
+const SYSTEM_PROMPT = FAST_CODE_FIXER_PROMPT;
 const USER_PROMPT = `
 ================================
 Here is the codebase of the project:

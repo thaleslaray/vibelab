@@ -7,6 +7,7 @@ import { executeInference, } from "../inferutils/infer";
 import Assistant from "./assistant";
 import { AIModels, InferenceContext } from "../inferutils/config.types";
 import { extractCommands } from "../utils/common";
+import { PROJECT_SETUP_PROMPT } from "../inferutils/defaultPrompts";
 
 interface GenerateSetupCommandsArgs {
     env: Env;
@@ -17,7 +18,7 @@ interface GenerateSetupCommandsArgs {
     inferenceContext: InferenceContext;
 }
 
-const SYSTEM_PROMPT = `You are an Expert DevOps Engineer at Cloudflare specializing in project setup and dependency management. Your task is to analyze project requirements and generate precise installation commands for missing dependencies.`
+const SYSTEM_PROMPT = PROJECT_SETUP_PROMPT;
 
 const SETUP_USER_PROMPT = `## TASK
 Analyze the blueprint and generate exact \`bun add\` commands for missing dependencies. Only suggest packages that are NOT already in the starting template.

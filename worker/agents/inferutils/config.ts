@@ -1,4 +1,17 @@
 import { AgentConfig, AIModels } from "./config.types";
+import {
+    TEMPLATE_SELECTION_PROMPT,
+    BLUEPRINT_PROMPT,
+    CONVERSATIONAL_RESPONSE_PROMPT,
+    SCREENSHOT_ANALYSIS_PROMPT,
+    PHASE_IMPLEMENTATION_PROMPT,
+    PHASE_GENERATION_PROMPT,
+    FILE_REGENERATION_PROMPT,
+    FAST_CODE_FIXER_PROMPT,
+    CODE_REVIEW_PROMPT,
+    REALTIME_CODE_FIXER_PROMPT,
+    PROJECT_SETUP_PROMPT
+} from './defaultPrompts';
 
 /*
 Use these configs instead for better performance, less bugs and costs:
@@ -73,6 +86,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 2000,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
         temperature: 0.6,
+        systemPrompt: TEMPLATE_SELECTION_PROMPT,
     },
     blueprint: {
         name: AIModels.GEMINI_2_5_PRO,
@@ -80,6 +94,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 64000,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
         temperature: 0.7,
+        systemPrompt: BLUEPRINT_PROMPT,
     },
     projectSetup: {
         name: AIModels.GEMINI_2_5_PRO,
@@ -87,6 +102,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 10000,
         temperature: 0.2,
         fallbackModel: AIModels.GEMINI_2_5_PRO,
+        systemPrompt: PROJECT_SETUP_PROMPT,
     },
     phaseGeneration: {
         name: AIModels.GEMINI_2_5_PRO,
@@ -94,6 +110,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 32000,
         temperature: 0.2,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
+        systemPrompt: PHASE_GENERATION_PROMPT,
     },
     firstPhaseImplementation: {
         name: AIModels.GEMINI_2_5_PRO,
@@ -101,6 +118,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 64000,
         temperature: 0.2,
         fallbackModel: AIModels.GEMINI_2_5_PRO,
+        systemPrompt: PHASE_IMPLEMENTATION_PROMPT,
     },
     phaseImplementation: {
         name: AIModels.GEMINI_2_5_PRO,
@@ -108,6 +126,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 64000,
         temperature: 0.2,
         fallbackModel: AIModels.GEMINI_2_5_PRO,
+        systemPrompt: PHASE_IMPLEMENTATION_PROMPT,
     },
     realtimeCodeFixer: {
         name: AIModels.DISABLED,
@@ -115,6 +134,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 32000,
         temperature: 1,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
+        systemPrompt: REALTIME_CODE_FIXER_PROMPT,
     },
     // Not used right now
     fastCodeFixer: {
@@ -123,6 +143,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 64000,
         temperature: 0.0,
         fallbackModel: AIModels.GEMINI_2_5_PRO,
+        systemPrompt: FAST_CODE_FIXER_PROMPT,
     },
     conversationalResponse: {
         name: AIModels.GEMINI_2_5_FLASH,
@@ -130,6 +151,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 4000,
         temperature: 0,
         fallbackModel: AIModels.GEMINI_2_5_PRO,
+        systemPrompt: CONVERSATIONAL_RESPONSE_PROMPT,
     },
     codeReview: {
         name: AIModels.GEMINI_2_5_PRO,
@@ -137,6 +159,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 32000,
         temperature: 0.1,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
+        systemPrompt: CODE_REVIEW_PROMPT,
     },
     fileRegeneration: {
         name: AIModels.GEMINI_2_5_PRO,
@@ -144,6 +167,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 32000,
         temperature: 0,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
+        systemPrompt: FILE_REGENERATION_PROMPT,
     },
     // Not used right now
     screenshotAnalysis: {
@@ -152,6 +176,7 @@ export const AGENT_CONFIG: AgentConfig = {
         max_tokens: 8000,
         temperature: 0.1,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
+        systemPrompt: SCREENSHOT_ANALYSIS_PROMPT,
     },
 };
 

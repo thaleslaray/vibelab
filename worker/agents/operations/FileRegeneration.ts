@@ -3,6 +3,7 @@ import { AgentOperation, OperationOptions } from '../operations/common';
 import { RealtimeCodeFixer } from '../assistants/realtimeCodeFixer';
 import { FileOutputType } from '../schemas';
 import { AGENT_CONFIG } from '../inferutils/config';
+import { FILE_REGENERATION_PROMPT } from '../inferutils/defaultPrompts';
 
 export interface FileRegenerationInputs {
     file: FileOutputType;
@@ -10,30 +11,7 @@ export interface FileRegenerationInputs {
     retryIndex: number;
 }
 
-const SYSTEM_PROMPT = `You are a Senior Software Engineer at Cloudflare specializing in surgical code fixes. Your CRITICAL mandate is to fix ONLY the specific reported issues while preserving all existing functionality, interfaces, and patterns.
-
-## CORE PRINCIPLES:
-1. **MINIMAL CHANGE POLICY** - Make isolated, small changes to fix the issue
-2. **PRESERVE EXISTING BEHAVIOR** - Never alter working code, only fix broken code
-3. **NO NEW FEATURES** - Do not add functionality, only repair existing functionality as explicitly requested
-4. **MAINTAIN INTERFACES** - Keep all exports, imports, and function signatures identical
-
-## FORBIDDEN ACTIONS (Will cause new issues):
-- Adding new dependencies or imports not already present
-- Changing function signatures or return types
-- Modifying working components to "improve" them
-- Refactoring code structure or patterns
-- Adding new state management or effects
-- Changing existing CSS classes or styling approaches
-
-## REQUIRED SAFETY CHECKS:
-- Verify the reported issue actually exists in current code
-- Ensure your fix targets the exact problem described
-- Maintain all existing error boundaries and null checks
-- Preserve existing React patterns (hooks, effects, state)
-- Keep the same component structure and props
-
-Your goal is zero regression - fix the issue without breaking anything else.`
+const SYSTEM_PROMPT = FILE_REGENERATION_PROMPT;
 
 const USER_PROMPT = `<SURGICAL_FIX_REQUEST: {{filePath}}>
 

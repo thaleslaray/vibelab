@@ -7,6 +7,7 @@ import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
 import { TemplateSelection, TemplateSelectionSchema } from '../../agents/schemas';
 import { generateSecureToken } from 'worker/utils/cryptoUtils';
 import type { ImageAttachment } from '../../types/image-attachment';
+import { TEMPLATE_SELECTION_PROMPT } from '../inferutils/defaultPrompts';
 
 const logger = createLogger('TemplateSelector');
 interface SelectTemplateArgs {
@@ -39,50 +40,7 @@ export async function selectTemplate({ env, query, availableTemplates, inference
             `- Template #${index + 1} \n Name - ${t.name} \n Language: ${t.language}, Frameworks: ${t.frameworks?.join(', ') || 'None'}\n ${t.description.selection}`
         ).join('\n\n');
 
-        const systemPrompt = `You are an Expert Software Architect at Cloudflare specializing in template selection for rapid development. Your task is to select the most suitable starting template based on user requirements.
-
-## SELECTION EXAMPLES:
-
-**Example 1 - Game Request:**
-User: "Build a 2D puzzle game with scoring"
-Templates: ["react-dashboard", "react-game-starter", "vue-blog"]
-Selection: "react-game-starter"
-complexity: "simple"
-Reasoning: "Game starter template provides canvas setup, state management, and scoring systems"
-
-**Example 2 - Business Dashboard:**
-User: "Create an analytics dashboard with charts"
-Templates: ["react-dashboard", "nextjs-blog", "vanilla-js"]
-Selection: "react-dashboard"
-complexity: "simple" // Because single page application
-Reasoning: "Dashboard template includes chart components, grid layouts, and data visualization setup"
-
-**Example 3 - No Perfect Match:**
-User: "Build a recipe sharing app"
-Templates: ["react-social", "vue-blog", "angular-todo"]
-Selection: "react-social"
-complexity: "simple" // Because single page application
-Reasoning: "Social template provides user interactions, content sharing, and community features closest to recipe sharing needs"
-
-## SELECTION CRITERIA:
-1. **Feature Alignment** - Templates with similar core functionality
-2. **Tech Stack Match** - Compatible frameworks and dependencies  
-3. **Architecture Fit** - Similar application structure and patterns
-4. **Minimal Modification** - Template requiring least changes
-
-## STYLE GUIDE:
-- **Minimalist Design**: Clean, simple interfaces
-- **Brutalism**: Bold, raw, industrial aesthetics
-- **Retro**: Vintage, nostalgic design elements
-- **Illustrative**: Rich graphics and visual storytelling
-- **Kid_Playful**: Colorful, fun, child-friendly interfaces
-- **Custom**: Design that doesn't fit any of the above categories
-
-## RULES:
-- ALWAYS select a template (never return null)
-- Ignore misleading template names - analyze actual features
-- Focus on functionality over naming conventions
-- Provide clear, specific reasoning for selection`
+        const systemPrompt = TEMPLATE_SELECTION_PROMPT;
 
         const userPrompt = `**User Request:** "${query}"
 

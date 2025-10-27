@@ -11,6 +11,7 @@ import { infer } from "../inferutils/core";
 import { MatchingStrategy, FailedBlock } from "../output-formats/diff-formats/search-replace";
 import { AIModels, ModelConfig, InferenceContext } from "../inferutils/config.types";
 import { AGENT_CONFIG } from "../inferutils/config";
+import { REALTIME_CODE_FIXER_PROMPT } from "../inferutils/defaultPrompts";
 // import { analyzeTypeScriptFile } from "../../services/code-fixer/analyzer";
 
 // Constants for magic numbers
@@ -24,8 +25,7 @@ export interface RealtimeCodeFixerContext {
     template: TemplateDetails;
 }
 
-const SYSTEM_PROMPT = `You are a seasoned, highly experienced code inspection officer and senior full-stack engineer specializing in React and TypeScript. Your task is to review and verify if the provided TypeScript code file wouldn't cause any runtime infinite rendering loops or critical failures, and provide fixes if any. 
-You would only be provided with a single file to review at a time. You are to simulate its runtime behavior and analyze it for listed issues. Your analysis should be thorough but concise, focusing on critical issues and effective fixes.`
+const SYSTEM_PROMPT = REALTIME_CODE_FIXER_PROMPT;
 /*
 <previous_files>
 {{previousFiles}}

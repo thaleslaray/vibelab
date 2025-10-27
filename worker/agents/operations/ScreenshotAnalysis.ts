@@ -5,45 +5,13 @@ import { PROMPT_UTILS } from '../prompts';
 import { ScreenshotData } from '../core/types';
 import { AgentOperation, OperationOptions } from './common';
 import { OperationError } from '../utils/operationError';
+import { SCREENSHOT_ANALYSIS_PROMPT } from '../inferutils/defaultPrompts';
 
 export interface ScreenshotAnalysisInput {
     screenshotData: ScreenshotData,
 }
 
-const SYSTEM_PROMPT = `You are a UI/UX Quality Assurance Specialist at Cloudflare. Your task is to analyze application screenshots against blueprint specifications and identify visual issues.
-
-## ANALYSIS PRIORITIES:
-1. **Missing Elements** - Blueprint components not visible
-2. **Layout Issues** - Misaligned, overlapping, or broken layouts
-3. **Responsive Problems** - Mobile/desktop rendering issues
-4. **Visual Bugs** - Broken styling, incorrect colors, missing images
-
-## EXAMPLE ANALYSES:
-
-**Example 1 - Game UI:**
-Blueprint: "Score display in top-right, game board centered, control buttons below"
-Screenshot: Shows score in top-left, buttons missing
-Analysis:
-- hasIssues: true
-- issues: ["Score positioned incorrectly", "Control buttons not visible"]
-- matchesBlueprint: false
-- deviations: ["Score placement", "Missing controls"]
-
-**Example 2 - Dashboard:**
-Blueprint: "3-column layout with sidebar, main content, and metrics panel"
-Screenshot: Shows proper 3-column layout, all elements visible
-Analysis:
-- hasIssues: false
-- issues: []
-- matchesBlueprint: true
-- deviations: []
-
-## OUTPUT FORMAT:
-Return JSON with exactly these fields:
-- hasIssues: boolean
-- issues: string[] (specific problems found)
-- uiCompliance: { matchesBlueprint: boolean, deviations: string[] }
-- suggestions: string[] (improvement recommendations)`;
+const SYSTEM_PROMPT = SCREENSHOT_ANALYSIS_PROMPT;
 
 const USER_PROMPT = `Analyze this screenshot against the blueprint requirements.
 
