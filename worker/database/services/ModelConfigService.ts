@@ -47,6 +47,7 @@ export class ModelConfigService extends BaseService {
                     temperature: userConfig.temperature !== null ? userConfig.temperature : defaultConfig.temperature,
                     reasoning_effort: this.castToReasoningEffort(userConfig.reasoningEffort) ?? defaultConfig.reasoning_effort,
                     fallbackModel: (userConfig.fallbackModel as AIModels) ?? defaultConfig.fallbackModel,
+                    systemPrompt: userConfig.systemPrompt ?? defaultConfig.systemPrompt,
                     isUserOverride: true,
                     userConfigId: userConfig.id
                 };
@@ -86,6 +87,7 @@ export class ModelConfigService extends BaseService {
                 temperature: config.temperature !== null ? config.temperature : defaultConfig.temperature,
                 reasoning_effort: this.castToReasoningEffort(config.reasoningEffort) ?? defaultConfig.reasoning_effort,
                 fallbackModel: (config.fallbackModel as AIModels) ?? defaultConfig.fallbackModel,
+                systemPrompt: config.systemPrompt ?? defaultConfig.systemPrompt,
                 isUserOverride: true,
                 userConfigId: config.id
             };
@@ -116,10 +118,10 @@ export class ModelConfigService extends BaseService {
             const config = userConfig[0];
             
             // Only create ModelConfig if user has actual overrides
-            const hasOverrides = config.modelName || config.maxTokens || 
-                                config.temperature !== null || config.reasoningEffort || 
-                                config.fallbackModel;
-            
+            const hasOverrides = config.modelName || config.maxTokens ||
+                                config.temperature !== null || config.reasoningEffort ||
+                                config.fallbackModel || config.systemPrompt;
+
             if (hasOverrides) {
                 const defaultConfig = AGENT_CONFIG[agentActionName];
                 const modelConfig: ModelConfig = {
@@ -128,6 +130,7 @@ export class ModelConfigService extends BaseService {
                     temperature: config.temperature !== null ? config.temperature : defaultConfig.temperature,
                     reasoning_effort: this.castToReasoningEffort(config.reasoningEffort) ?? defaultConfig.reasoning_effort,
                     fallbackModel: (config.fallbackModel as AIModels) || defaultConfig.fallbackModel,
+                    systemPrompt: config.systemPrompt || defaultConfig.systemPrompt,
                 };
                 return modelConfig;
             }
@@ -162,6 +165,7 @@ export class ModelConfigService extends BaseService {
             temperature: config.temperature !== undefined ? config.temperature : null,
             reasoningEffort: (config.reasoning_effort && config.reasoning_effort !== 'minimal') ? config.reasoning_effort : null,
             fallbackModel: config.fallbackModel || null,
+            systemPrompt: config.systemPrompt || null,
             isActive: true,
             updatedAt: new Date()
         };

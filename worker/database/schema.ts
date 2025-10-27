@@ -494,16 +494,17 @@ export const userSecrets = sqliteTable('user_secrets', {
 export const userModelConfigs = sqliteTable('user_model_configs', {
     id: text('id').primaryKey(),
     userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    
+
     // Configuration Details
     agentActionName: text('agent_action_name').notNull(), // Maps to AgentActionKey from config.ts
     modelName: text('model_name'), // Override for AIModels - null means use default
     maxTokens: integer('max_tokens'), // Override max tokens - null means use default
     temperature: real('temperature'), // Override temperature - null means use default
-    reasoningEffort: text('reasoning_effort', { enum: REASONING_EFFORT_VALUES }), // Override reasoning effort  
+    reasoningEffort: text('reasoning_effort', { enum: REASONING_EFFORT_VALUES }), // Override reasoning effort
     providerOverride: text('provider_override', { enum: PROVIDER_OVERRIDE_VALUES }), // Override provider
     fallbackModel: text('fallback_model'), // Override fallback model
-    
+    systemPrompt: text('system_prompt'), // Override system prompt - null means use default
+
     // Status and Metadata
     isActive: integer('is_active', { mode: 'boolean' }).default(true),
     createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`CURRENT_TIMESTAMP`),
